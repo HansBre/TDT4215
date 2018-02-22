@@ -155,3 +155,7 @@ $RECYCLE.BIN/
 
 /.idea
 
+# Project spesific
+test.data.gz
+test.data
+
