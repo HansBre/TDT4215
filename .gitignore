@@ -159,3 +159,7 @@ $RECYCLE.BIN/
 test.data.gz
 test.data
 
+one_week.tar.gz
+three_month.tar.gz
+one_week/
+three_month/
