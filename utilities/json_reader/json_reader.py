@@ -1,5 +1,6 @@
 from flask import Flask, request, make_response, redirect, url_for
 import sys
+import gzip
 app = Flask(__name__)
 
 @app.route("/")
@@ -13,7 +14,12 @@ def explorer():
     num_rows = int(request.args.get('n', 30))
     last_row = int(request.args.get('to', first_row + num_rows))
 
-    with open(app.config.get('json_file')) as fp:
+    if app.config.get('json_file').endswith('.gz'):
+        open_func = gzip.open
+    else:
+        open_func = open
+
+    with open_func(app.config.get('json_file'), 'rt', encoding='utf8') as fp:
         lines_read = 0
         while lines_read < first_row:
             fp.readline()
