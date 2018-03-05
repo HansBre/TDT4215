@@ -87,6 +87,13 @@ with args.dataset1 as f1, args.dataset2 as f2:
             except KeyError as e:
                 # A field was missing for this JSON object, skip
                 continue
+
+            # TODO:
+            # If No keywords AND no active_time -> Pass
+            # If Only keywords -> Pass
+            # If Only active_time -> rate by only active time.
+            # If both -> rate by both.
+
             if not keywords == 'None':
                 print('\t'.join([uid, iid, keywords]), file=f2)
             if not active_time == '0':
