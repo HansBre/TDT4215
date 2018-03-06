@@ -1,5 +1,5 @@
 """
-Module with Surprise-compatible algorithm for combining multiple Suprise-
+Module with Surprise-compatible algorithm for combining multiple Surprise-
 algorithms.
 """
 from itertools import chain
@@ -109,15 +109,15 @@ class Hybrid(AlgoBase):
             return AlgorithmResult(algorithm, weight, normalized_prediction,
                                    extra)
 
-        weighted_results = map(weight_prediction, normal_results)
+        weighted_results = tuple(map(weight_prediction, normal_results))
         weighted_predictions = map(lambda r: r.prediction, weighted_results)
         summarized_predictions = sum(weighted_predictions)
 
         # Normalize/weight the infinity weighted algorithms
-        weighted_filtering_results = map(
+        weighted_filtering_results = tuple(map(
             weight_filtering_prediction,
             filter_results
-        )
+        ))
         # We're only interested in the prediction
         filter_predictions = map(
             lambda r: r.prediction,
