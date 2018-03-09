@@ -1,13 +1,8 @@
-"""
-Created on Thu Feb  8 14:46:23 2018
-
-@author: zhanglemei
-"""
-
 import json
 import os
 import gzip
 import argparse
+from tools.rater import rate_article
 
 parser = argparse.ArgumentParser(
     description='Preprocess the data set',
@@ -21,7 +16,7 @@ parser.add_argument(
 parser.add_argument(
     '--dataset1', '-1',
     type=argparse.FileType('wt', encoding='utf8'),
-    help='File to write user, item and active time to. (Default: %(default)s)',
+    help='File to write user, item and estimated rating to. (Default: %(default)s)',
     default='dataset1.txt',
 )
 parser.add_argument(
@@ -42,6 +37,38 @@ with args.dataset1 as f1, args.dataset2 as f2:
     else:
         input_func = open
 
+    users = dict()
+
+    print("Building Keyword preferences")
+    with input_func(args.input, 'rt', encoding='utf8') as input_file:
+        for line in input_file:
+            obj = json.loads(line.strip())
+            try:
+                uid = obj['userId']
+                if uid not in users:
+                    users[uid] = dict()
+                keywords = obj['keywords'] if 'keywords' in obj else 'None'
+                active_time = str(obj['activeTime']) if 'activeTime' in obj else '0'
+                if keywords is not 'None':
+                    # If a user clicked on an article, we assume that means he is at least somewhat intrested
+                    # And thus we add the keyword to the users preferred keywords.
+                    for keyword in keywords.split(','):
+                        k = keyword.lower()
+                        if k in users[uid]:
+                            users[uid][k] += 1
+                        else:
+                            users[uid][k] = 1
+
+            except Exception as e:
+                continue
+
+    # Normalize keyword preferences
+    for user_keywords in users.values():
+        if len(user_keywords) > 0:
+            m = max(user_keywords.values())
+            for keyword, n in user_keywords.items():
+                user_keywords[keyword] = round(1 + ((n / m) * 4))
+
     # Now do the opening
     with input_func(args.input, 'rt', encoding='utf8') as input_file:
         for line in input_file:
@@ -49,12 +76,27 @@ with args.dataset1 as f1, args.dataset2 as f2:
             try:
                 uid, iid = obj['userId'], obj['id']
                 keywords = obj['keywords'] if 'keywords' in obj else 'None'
+                keywords.split(',')
+                for k in keywords:
+                    k.lower()
                 active_time = str(obj['activeTime']) if 'activeTime' in obj else '0'
+                article = dict()
+                article['time'] = active_time
+                article['keywords'] = keywords
+
             except KeyError as e:
                 # A field was missing for this JSON object, skip
                 continue
+
+            # TODO:
+            # If No keywords AND no active_time -> Pass
+            # If Only keywords -> Pass
+            # If Only active_time -> rate by only active time.
+            # If both -> rate by both.
+
             if not keywords == 'None':
                 print('\t'.join([uid, iid, keywords]), file=f2)
             if not active_time == '0':
-                print('\t'.join([uid, iid, active_time]), file=f1)
+                rating = rate_article(users[uid], article)
+                print('\t'.join([uid, iid, rating]), file=f1)
 print('>>>Done!')

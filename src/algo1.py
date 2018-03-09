@@ -5,6 +5,9 @@ from surprise import SVD
 from surprise.model_selection import KFold
 import statistics
 import csv
+from tools.prediction_tools import precision_recall_at_k, get_f1
+from sklearn.metrics import roc_auc_score
+import numpy as np
 from src.hybrid import Hybrid, AlgorithmTuple
 
 
@@ -28,6 +31,12 @@ parser.add_argument(
     default=False,
 )
 
+parser.add_argument(
+    '--metrics', '-m',
+    help='When given prints metrics',
+    default=False,
+)
+
 args = parser.parse_args()
 
 reader = Reader(line_format='user item rating', sep='\t')
@@ -38,7 +47,8 @@ algo = Hybrid((
     AlgorithmTuple(SVD(), 1),
 ))
 
-kf = KFold(n_splits=5)
+n_folds = 5
+kf = KFold(n_splits=n_folds)
 
 if args.csv:
     output_file = open(args.csv, 'wt', newline='')
@@ -52,6 +62,7 @@ if args.csv:
         raise
 
 try:
+    sum_precision, sum_recall, sum_f1, sum_roc_auc_score = 0, 0, 0, 0
     for trainset, testset in kf.split(data):
         algo.fit(trainset)
         predictions = algo.test(testset)
@@ -71,6 +82,44 @@ try:
         else:
             errors = map(lambda p: abs(p.r_ui - p.est), predictions)
             print(statistics.median(errors))
+
+        if args.metrics:
+            # Evaluate Metrics
+            precision_pr_user, recall_pr_user = precision_recall_at_k(predictions)
+            fold_average_precision = np.average(list(precision_pr_user.values()))
+            fold_average_recall = np.average(list(recall_pr_user.values()))
+            fold_average_f1 = get_f1(fold_average_precision, fold_average_recall)
+            true, test = [], []
+            users_predictions = dict()
+            for prediction in predictions:
+                true.append(prediction.r_ui)
+                test.append(prediction.est)
+                if prediction.uid in users_predictions.keys():
+                    users_predictions[prediction.uid].append(prediction)
+                else:
+                    users_predictions[prediction.uid] = [prediction]
+            fold_roc_auc_score = roc_auc_score(true, test)
+
+            # MHRH TODO
+            for user_id, predictions in users_predictions.items():
+                predictions.sort(key=lambda x: x.est, reverse=True)
+                # Now we chan calculate mhrh over the first k elements in the sorted list.
+
+            sum_precision += fold_average_precision
+            sum_recall += fold_average_recall
+            sum_f1 += fold_average_f1
+            sum_roc_auc_score += fold_roc_auc_score
+
+    if args.metrics:
+        average_recall = sum_recall / n_folds
+        average_precision = sum_precision / n_folds
+        average_f1 = sum_f1 / n_folds
+        average_roc_auc = sum_roc_auc_score / n_folds
+        print("---RESULT---")
+        print("Average Precision:", average_precision)
+        print("Average Recall:", average_recall)
+        print("Average F1:", average_f1)
+        print("Average ROC AUC:", average_roc_auc)
 
 finally:
     if args.csv:
