@@ -34,7 +34,7 @@ parser.add_argument(
 parser.add_argument(
     '--metrics', '-m',
     help='When given prints metrics',
-    default=False,
+    action='store_true',
 )
 
 args = parser.parse_args()
