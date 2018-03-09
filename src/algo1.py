@@ -38,6 +38,12 @@ parser.add_argument(
     action='store_true',
 )
 
+parser.add_argument(
+    '--verbose', '-v',
+    help='When given prints median error per fold',
+    action='store_true',
+)
+
 args = parser.parse_args()
 
 reader = Reader(line_format='user item rating', sep='\t')
@@ -85,7 +91,8 @@ try:
                 })
         else:
             errors = map(lambda p: abs(p.r_ui - p.est), predictions)
-            print(statistics.median(errors))
+            if args.verbose:
+                print("Avg. Rating Error:", statistics.median(errors))
 
         if args.metrics:
             # Evaluate Metrics
@@ -93,6 +100,7 @@ try:
             fold_average_precision = np.average(list(precision_pr_user.values()))
             fold_average_recall = np.average(list(recall_pr_user.values()))
             fold_average_f1 = get_f1(fold_average_precision, fold_average_recall)
+            # Build prediction sets grouped by user for roc_auc metric evaluation
             true, test = [], []
             users_predictions = dict()
             for prediction in predictions:
@@ -102,17 +110,17 @@ try:
                     users_predictions[prediction.uid].append(prediction)
                 else:
                     users_predictions[prediction.uid] = [prediction]
-            fold_roc_auc_score = roc_auc_score(true, test)
+            # fold_roc_auc_score = roc_auc_score(true, test)
 
             # MHRH TODO
-            for user_id, predictions in users_predictions.items():
-                predictions.sort(key=lambda x: x.est, reverse=True)
+            # for user_id, predictions in users_predictions.items():
+                # predictions.sort(key=lambda x: x.est, reverse=True)
                 # Now we chan calculate mhrh over the first k elements in the sorted list.
 
             sum_precision += fold_average_precision
             sum_recall += fold_average_recall
             sum_f1 += fold_average_f1
-            sum_roc_auc_score += fold_roc_auc_score
+            # sum_roc_auc_score += fold_roc_auc_score
 
     if args.metrics:
         average_recall = sum_recall / n_folds
@@ -123,7 +131,8 @@ try:
         print("Average Precision:", average_precision)
         print("Average Recall:", average_recall)
         print("Average F1:", average_f1)
-        print("Average ROC AUC:", average_roc_auc)
+
+        # print("Average ROC AUC:", average_roc_auc)
 
 finally:
     if args.csv:

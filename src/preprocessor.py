@@ -76,7 +76,7 @@ with args.dataset1 as f1, args.dataset2 as f2:
             try:
                 uid, iid = obj['userId'], obj['id']
                 keywords = obj['keywords'] if 'keywords' in obj else 'None'
-                keywords.split(',')
+                keywords = keywords.split(',')
                 for k in keywords:
                     k.lower()
                 active_time = str(obj['activeTime']) if 'activeTime' in obj else '0'
@@ -94,9 +94,9 @@ with args.dataset1 as f1, args.dataset2 as f2:
             # If Only active_time -> rate by only active time.
             # If both -> rate by both.
 
-            if not keywords == 'None':
-                print('\t'.join([uid, iid, keywords]), file=f2)
+            # if not keywords == 'None':
+                # print('\t'.join([uid, iid, keywords]), file=f2)
             if not active_time == '0':
-                rating = rate_article(users[uid], article)
+                rating = str(rate_article(users[uid], article))
                 print('\t'.join([uid, iid, rating]), file=f1)
 print('>>>Done!')
