@@ -42,10 +42,13 @@ args = parser.parse_args()
 reader = Reader(line_format='user item rating', sep='\t')
 data = Dataset.load_from_file(args.input, reader=reader)
 
-algo = Hybrid((
-    # Singular Value Decomposition (SVD) is used for this example
-    AlgorithmTuple(SVD(), 1),
-))
+algo = Hybrid(
+    (
+        # Singular Value Decomposition (SVD) is used for this example
+        AlgorithmTuple(SVD(), 1),
+    ),
+    'spool',
+)
 
 n_folds = 5
 kf = KFold(n_splits=n_folds)
@@ -124,3 +127,5 @@ try:
 finally:
     if args.csv:
         output_file.close()
+    if algo:
+        algo.cleanup()

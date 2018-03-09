@@ -8,10 +8,9 @@ import gc
 from os import path, getpid, remove
 import operator
 from glob import glob
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 from functools import reduce
-from surprise import AlgoBase, PredictionImpossible, dump
-
+from surprise import AlgoBase, PredictionImpossible, dump, Prediction
 
 """
 Tuple representing an algorithm and its weight.
@@ -28,6 +27,16 @@ AlgorithmTuple = namedtuple('AlgorithmTuple', ['algorithm', 'weight'])
 AlgorithmResult = namedtuple(
     'AlgorithmResult',
     ['algorithm_name', 'weight', 'prediction', 'extra']
+)
+
+JobRequest = namedtuple(
+    'JobRequest',
+    ['uid', 'iid', 'r_ui', 'iuid', 'iiid'],
+)
+
+JobResult = namedtuple(
+    'JobResult',
+    ['uid', 'iid', 'r_ui', 'est'],
 )
 
 
@@ -67,6 +76,9 @@ class Hybrid(AlgoBase):
         weights_without_inf = filter(lambda w: w != float('inf'), weights)
         self.sum_weights = sum(weights_without_inf)
         self.trainset = None
+        self.job_requests = []
+        self.estimations = dict()
+        self.job_responses = []
 
     def _write(self, index: int) -> None:
         """
@@ -217,15 +229,228 @@ class Hybrid(AlgoBase):
     def fit(self, trainset):
         # Propagate the fit call to all algorithms that make up this algorithm
         self.trainset = trainset
-        for (index, (algorithm, _)) in enumerate(self.all_algorithms()):
+        for algorithm, _, index in self.all_algorithms():
             algorithm.fit(trainset)
             self._write(index)
         return self
 
-    def estimate(self, u, i):
-        # Let each algorithm make its prediction, and register the result
-        results, rejected_results, total_weights = self.run_child_algos(u, i)
+    def test(self, testset, verbose=False):
+        # We override the default test method so that we can do ask the same
+        # algorithm to predict multiple cases at once, instead of constantly
+        # switching between algorithms. We do this by not using predict() and
+        # estimate() at all, re-implementing predict() inside create_job() and
+        # process_result() and re-implementing estimate inside
+        # run_child_algos_on_jobs() and run_combiner().
 
+        # First, translate the raw user ID and item ID into the internal user
+        # ID and item ID (this is the same that the original test and predict
+        # does).
+        jobs = []
+        for (uid, iid, r_ui_trans) in testset:
+            jobs.append(self.create_job(uid, iid, r_ui_trans - self.trainset.offset))
+
+        # Next, iterate through each algorithm. For each algorithm, get its
+        # prediction for each job created above.
+        results = self.run_child_algos_on_jobs(jobs)
+
+        # Now, for each job created above, we combine the results from the
+        # different algorithms.
+        job_responses = self.run_combiner(jobs, results)
+        del jobs
+
+        # Finally, we go from what combine() returns to Prediction objects
+        predictions = [self.process_result(result)
+                       for result in job_responses]
+        return predictions
+
+    def create_job(self, uid, iid, r_ui) -> JobRequest:
+        """
+        Create a JobRequest, translating from raw to internal user and item IDs.
+
+        Args:
+            uid: Raw user ID.
+            iid: Raw item ID.
+            r_ui: Actual result.
+
+        Returns:
+            Instance of JobRequest with all values set.
+        """
+        # Adaptation of first part of predict() from AlgoBase
+        try:
+            iuid = self.trainset.to_inner_uid(uid)
+        except ValueError:
+            iuid = 'UKN__' + str(uid)
+
+        try:
+            iiid = self.trainset.to_inner_iid(iid)
+        except ValueError:
+            iiid = 'UKN__' + str(iid)
+
+        return JobRequest(uid, iid, r_ui, iuid, iiid)
+
+    def run_child_algos_on_jobs(self, jobs):
+        """
+        Collect each algorithm's prediction for each job.
+
+        Args:
+            jobs: List of JobRequest. These are the user/item pairs we want to
+                collect predictions for.
+
+        Returns:
+            Dict where key is (inner user ID, inner item ID) and value is a
+            dictionary consisting of results, total_weights and
+            rejected_results, as expected by combine().
+        """
+        def create_empty_result_dict():
+            return {
+                'results': [],
+                'total_weights': self.sum_weights,
+                'rejected_results': []
+            }
+        # TODO: Use a list instead with indices matching those of jobs,
+        # since the same user ID and item ID pair may appear multiple times
+        results = defaultdict(create_empty_result_dict)
+
+        # Go though one algorithm at a time
+        for algorithm, weight, _ in self.all_algorithms():
+            # Don't fetch the name for every job
+            algorithm_name = self._get_algorithm_name(algorithm)
+            # Iterate through the job requests, and make a prediction for each
+            for job in jobs:
+                u = job.iuid
+                i = job.iiid
+                key = (u, i)
+
+                try:
+                    this_result = algorithm.estimate(u, i)
+                    # Did we get just prediction or prediction and extras?
+                    extras = None
+                    if isinstance(this_result, tuple):
+                        this_result, extras = this_result
+
+                    if this_result == self.trainset.global_mean:
+                        # Though the algorithm did not admit it, it failed to
+                        # produce a result different than the global mean (a
+                        # symptom that a prediction was impossible)
+                        raise PredictionImpossible(
+                            'Algorithm prediction equals global mean'
+                        )
+
+                    # If we are here, the algorithm managed to produce a result!
+                    results[key]['results'].append(AlgorithmResult(
+                        algorithm_name,
+                        weight,
+                        this_result,
+                        extras
+                    ))
+                except PredictionImpossible as e:
+                    # The algorithm failed! Register it as such
+                    results[key]['rejected_results'].append(AlgorithmResult(
+                        algorithm_name,
+                        weight,
+                        None,
+                        e
+                    ))
+                    # Don't use this algorithm's weight when weighting
+                    if weight != float('inf'):
+                        results[key]['total_weights'] -= weight
+        # Make it so results throws KeyError when non-existing key is accessed
+        results.default_factory = None
+        return results
+
+    def run_combiner(self, jobs, algorithm_results):
+        """
+        Combine predictions per job so we have one hybrid prediction.
+
+        Args:
+            jobs: List of JobRequest. User/item pairs we want to predict.
+            algorithm_results: Dictionary of dictionaries, as returned by
+                run_child_algos_on_jobs().
+
+        Returns:
+            List of JobResult, that are the final output of the hybrid
+                recommender system.
+        """
+        job_results = []
+        for job in jobs:
+            key = (job.iuid, job.iiid)
+            this_result = algorithm_results[key]
+            results = this_result['results']
+            rejected_results = this_result['rejected_results']
+            total_weights = this_result['total_weights']
+
+            try:
+                est = self.combine(results, rejected_results, total_weights)
+            except PredictionImpossible as e:
+                est = e
+            job_results.append(self.create_job_result(job, est))
+        return job_results
+
+    @staticmethod
+    def create_job_result(job_request, est):
+        """
+        Create JobResult using JobRequest and an estimate.
+
+        Args:
+            job_request: Instance of JobRequest, which this estimate pertains
+                to.
+            est: The estimate, in same format as the return value of estimate().
+
+        Returns:
+            Instance of JobResult for this job_request and est.
+        """
+        uid, iid, r_ui, iuid, iiid = job_request
+        return JobResult(uid, iid, r_ui, est)
+
+    def process_result(self, job_response):
+        """
+        Transform the return values of combine() into Prediction.
+
+        This is equal to the post-processing in predict().
+
+        Args:
+            job_response: Instance of JobResponse.
+
+        Returns:
+            List of Prediction.
+        """
+        # Adaptation of second part of predict() from AlgoBase
+        uid, iid, r_ui, est = job_response
+        details = {}
+        if isinstance(est, PredictionImpossible):
+            error = str(est)
+            est = self.trainset.global_mean
+            details['was_impossible'] = True
+            details['reason'] = error
+        else:
+            if isinstance(est, tuple):
+                est, details = est
+
+            details['was_impossible'] = False
+
+        # Remap the rating into its initial rating scale
+        est -= self.trainset.offset
+
+        # clip estimate
+        lower_bound, higher_bound = self.trainset.rating_scale
+        est = min(higher_bound, est)
+        est = max(lower_bound, est)
+
+        return Prediction(uid, iid, r_ui, est, details)
+
+    def combine(self, results, rejected_results, total_weights):
+        """
+        Combine the predictions from different algorithms into one estimate.
+
+        Args:
+            results: List of AlgorithmResult which produced a prediction.
+            rejected_results: List of AlgorithmResult which did not produce a
+                prediction.
+            total_weights: Integer, sum of weights for all results in results.
+
+        Returns:
+            Tuple of estimate and extras, like AlgoBase.estimate().
+        """
         # We have two types of results, each of which is used differently.
         # Normal results are weighted, filter_results are made into numbers
         # in range [0,1] and are then multiplied with the prediction.
@@ -292,75 +517,6 @@ class Hybrid(AlgoBase):
 
         return prediction, extras
 
-    def run_child_algos(self, u, i):
-        """
-        Run all algorithms that make up this hybrid algorithm.
-
-        Args:
-            u: Inner user ID.
-            i: Inner item ID.
-
-        Returns:
-            tuple of results, rejected_results and total_weights.
-            results is a list of PredictionResult for algorithms that made a
-            prediction. rejected_results is a list of PredictionResult for
-            algorithms that did not make a prediction. total_weights is the
-            total number of weights for the algorithms that did succeed at
-            giving a prediction.
-        """
-        # All results which the algorithm was able to produce
-        results = []
-        # Total weight of all algorithms that produced a result
-        total_weights = self.sum_weights
-        # Algorithms that failed to produce a result
-        rejected_results = []
-
-        for algorithm, weight, _ in self.all_algorithms():
-            # First, let's try to calculate using this algorithm
-            try:
-                this_result = algorithm.estimate(u, i)
-                # Algorithms may either return the prediction alone, or a tuple
-                # of (prediction, extras). Assume the first case is true.
-                extras = None
-                if isinstance(this_result, tuple):
-                    # Turns out it's the second case, fix this_result and extras
-                    extras = this_result[1]
-                    this_result = this_result[0]
-
-                if this_result == self.trainset.global_mean:
-                    # Though the algorithm did not admit it, it failed to
-                    # produce a result different than the global mean (a symptom
-                    # that a prediction was impossible)
-                    raise PredictionImpossible(
-                        'Algorithm prediction equals global mean'
-                    )
-
-                # If we are here, the algorithm managed to produce a result!
-                results.append(AlgorithmResult(
-                    self._get_algorithm_name(algorithm),
-                    weight,
-                    this_result,
-                    extras
-                ))
-
-            except PredictionImpossible as e:
-                # The algorithm failed! Register it as such
-                rejected_results.append(AlgorithmResult(
-                    self._get_algorithm_name(algorithm),
-                    weight,
-                    None,
-                    e
-                ))
-                # Don't use this algorithm's weight when weighting
-                if weight != float('inf'):
-                    total_weights -= weight
-
-        # Did any algorithm succeed at predicting?
-        if not results or total_weights == 0:
-            raise PredictionImpossible('No algorithm could give a result')
-
-        return results, rejected_results, total_weights
-
     @staticmethod
     def _create_extras(*results):
         """
@@ -377,7 +533,7 @@ class Hybrid(AlgoBase):
             is AlgorithmResult.
         """
         all_results = chain(*results)
-        extras = {r.algorithm: r for r in all_results}
+        extras = {r.algorithm_name: r for r in all_results}
         return extras
 
     @staticmethod
