@@ -5,8 +5,9 @@ algorithms.
 from itertools import chain
 
 import gc
-from os import path, getpid
+from os import path, getpid, remove
 import operator
+from glob import glob
 from collections import namedtuple
 from functools import reduce
 from surprise import AlgoBase, PredictionImpossible, dump
@@ -24,8 +25,10 @@ Attributes:
 AlgorithmTuple = namedtuple('AlgorithmTuple', ['algorithm', 'weight'])
 
 
-AlgorithmResult = namedtuple('AlgorithmResult',
-                             ['algorithm', 'weight', 'prediction', 'extra'])
+AlgorithmResult = namedtuple(
+    'AlgorithmResult',
+    ['algorithm_name', 'weight', 'prediction', 'extra']
+)
 
 
 class Hybrid(AlgoBase):
@@ -33,9 +36,21 @@ class Hybrid(AlgoBase):
     Algorithm combining multiple algorithms into a hybrid system.
     """
 
-    def __init__(self, algorithms, spool_dir = None, **kwargs):
+    def __init__(self, algorithms, spool_dir=None, **kwargs):
         """
         Set up which algorithms make up this hybrid algorithm.
+
+        To use the memory saving techniques, you must ensure the following:
+        1. Do not hold any of the given algorithms in a variable. If you need to
+           to so, make sure you delete that variable (using the del statement)
+           before using the Hybrid instance. Without this, the algorithm
+           instance will not be garbage collected and will stay in memory.
+        2. Specify a spool_dir located on disk. This should be an existing
+           directory which the process can write files to. The process may share
+           this directory with other processes running the Hybrid algorithm.
+           A directory under /tmp may work, but on some configurations /tmp is
+           located in memory, making the whole memory saving thing pointless.
+           You should choose another directory on such systems.
 
         Args:
             algorithms: List of AlgorithmTuple. Each tuple consists of an
@@ -45,7 +60,7 @@ class Hybrid(AlgoBase):
             **kwargs: Extra keyword arguments for the AlgoBase constructor.
         """
         super().__init__(**kwargs)
-        self.algorithms = list(algorithms)
+        self._algorithms = list(algorithms)
         self.spool_dir = spool_dir
 
         weights = map(lambda a: a.weight, algorithms)
@@ -53,57 +68,161 @@ class Hybrid(AlgoBase):
         self.sum_weights = sum(weights_without_inf)
         self.trainset = None
 
-    def _write(self, index):
-        if self.spool_dir:
-            dump.dump(self._file_for(index), algo=self.algorithms[index].algorithm)
+    def _write(self, index: int) -> None:
+        """
+        Write the algorithm at the given index to disk.
 
-    def _close(self, index):
+        The algorithm stays in memory after the write.
+
+        If self.spool_dir is None, this method does nothing.
+
+        Args:
+            index: Number identifying the algorithm instance. This is the third
+                argument yielded by all_algorithms().
+
+        Returns:
+            Nothing.
+        """
+        if self.spool_dir:
+            dump.dump(
+                self._file_for(index),
+                algo=self._algorithms[index].algorithm
+            )
+
+    def _close(self, index: int) -> None:
+        """
+        Remove the algorithm from memory.
+
+        The algorithm is NOT written to disk automatically. You must call
+        self._write(index) yourself.
+
+        Make sure you have no references to the algorithm before calling this,
+        as it will try to garbage collect the algorithm instance.
+
+        If self.spool_dir is None, this method does nothing.
+
+        Internally, the self._algorithms list contains the AlgorithmTuple when
+        the algorithm is loaded, and a function which loads and returns the
+        AlgorithmTuple when called if the algorithm is not stored in memory.
+        This function replaces the current entry in self._algorithms with such
+        a function, and runs the garbage collector afterwards to (hopefully)
+        collect the algorithm instance.
+
+        Args:
+            index: Number identifying the algorithm instance. This is the third
+                argument yielded by all_algorithms().
+        """
         if not self.spool_dir:
             return
 
-        weight = self.algorithms[index].weight
+        weight = self._algorithms[index].weight
 
+        # This function is called when the algorithm should be loaded again:
         def load():
             _, loaded_algo = dump.load(self._file_for(index))
             return AlgorithmTuple(loaded_algo, weight)
 
-        self.algorithms[index] = load
+        self._algorithms[index] = load
+        # We no longer reference the algorithm, so try to garbage collect it
         gc.collect()
 
-    def _open(self, index):
-        if not self.spool_dir:
-            return self.algorithms[index]
+    def _open(self, index: int) -> AlgorithmTuple:
+        """
+        Fetch the given algorithm.
 
-        instance = self.algorithms[index]
+        This method automatically loads the algorithm from disk if this is
+        necessary. Otherwise, it is simply returned.
+
+        If self.spool_dir is None, this method will not try to load from disk.
+
+        Args:
+            index: Number identifying the algorithm instance. This is the third
+                argument yielded by all_algorithms().
+
+        Returns:
+            The AlgorithmTuple associated with the given index.
+        """
+        if not self.spool_dir:
+            return self._algorithms[index]
+
+        instance = self._algorithms[index]
 
         if callable(instance):
-            self.algorithms[index] = instance()
+            self._algorithms[index] = instance()
 
-        return self.algorithms[index]
+        return self._algorithms[index]
 
     def _file_for(self, index):
+        """
+        Create filename for where to store the identified algorithm.
+
+        Args:
+            index: Number identifying the algorithm instance. This is the third
+                argument yielded by all_algorithms().
+
+        Returns:
+            Absolute path to where the given algorithm should be stored.
+        """
         abs_dir = path.abspath(self.spool_dir)
         filename = "serialized_{pid}_{index}"\
             .format(pid=getpid(), index=index)
         return path.join(abs_dir, filename)
 
-    def cleanup(self):
+    def all_algorithms(self):
+        """
+        Iterate over all the algorithms in a memory-conserving manner.
+
+        Each algorithm will be loaded from the file on disk, if it's not in
+        memory already. It will then be returned from the generator. Afterwards,
+        the algorithm will be removed from memory (without saving to disk).
+
+        Make sure you don't have a hanging reference to the algorithm after
+        you are done, since that will hinder our ability to remove it from
+        memory.
+
+        If you wish to persist any changes to the returned algorithm, you must
+        call self._write(index) yourself.
+
+        Example:
+            for algorithm, weight, index in self.all_algorithms():
+                print(self._get_algorithm_name(algorithm), weight, index)
+
+        If self.spool_dir is None, this will simply iterate over the algorithms
+        in memory.
+
+        Yields:
+            Tuple of (algorithm, weight, index).
+            algorithm is the instance of the algorithm, subclass of AlgoBase.
+            weight is an integer or float('inf') detailing how much to weight
+                this algorithm's prediction.
+            index is the index of this algorithm in the underlying list, and is
+                used to identify it with the _open, _write and _close methods.
+        """
+        for index in range(len(self._algorithms)):
+            yield (*self._open(index), index)
+            self._close(index)
+
+    def cleanup(self) -> None:
+        """Remove stored instances of algorithms from disk."""
         if not self.spool_dir:
             return
 
-        # TODO: Remove all files that pertain to this instance
+        # Here, we do some magic. We want to remove all files, no matter which
+        # index they have. We therefore use the wildcard as the index, which
+        # matches all indices when used with glob.
+        matching_files = glob(self._file_for('*'))
+        for file in matching_files:
+            remove(file)
 
     def fit(self, trainset):
-        # TODO: Use the _open and _close methods
         # Propagate the fit call to all algorithms that make up this algorithm
         self.trainset = trainset
-        for algorithm, _ in self.algorithms:
+        for (index, (algorithm, _)) in enumerate(self.all_algorithms()):
             algorithm.fit(trainset)
+            self._write(index)
         return self
 
     def estimate(self, u, i):
-        # TODO: Use the _open and _close methods
-        # TODO: Use algorithm name earlier, so we don't reference the instance
         # Let each algorithm make its prediction, and register the result
         results, rejected_results, total_weights = self.run_child_algos(u, i)
 
@@ -196,7 +315,7 @@ class Hybrid(AlgoBase):
         # Algorithms that failed to produce a result
         rejected_results = []
 
-        for algorithm, weight in self.algorithms:
+        for algorithm, weight, _ in self.all_algorithms():
             # First, let's try to calculate using this algorithm
             try:
                 this_result = algorithm.estimate(u, i)
@@ -218,7 +337,7 @@ class Hybrid(AlgoBase):
 
                 # If we are here, the algorithm managed to produce a result!
                 results.append(AlgorithmResult(
-                    algorithm,
+                    self._get_algorithm_name(algorithm),
                     weight,
                     this_result,
                     extras
@@ -227,7 +346,7 @@ class Hybrid(AlgoBase):
             except PredictionImpossible as e:
                 # The algorithm failed! Register it as such
                 rejected_results.append(AlgorithmResult(
-                    algorithm,
+                    self._get_algorithm_name(algorithm),
                     weight,
                     None,
                     e
@@ -255,17 +374,12 @@ class Hybrid(AlgoBase):
 
         Returns:
             Dictionary where key is the algorithm's class name, and the value
-            is AlgorithmResult except the algorithm value is the class name and
-            not the instance of the algorithm.
+            is AlgorithmResult.
         """
         all_results = chain(*results)
-
-        def use_class_name(result):
-            algorithm, weight, prediction, extra = result
-            name = type(algorithm).__name__
-            return AlgorithmResult(name, weight, prediction, extra)
-
-        all_results_with_algoname = map(use_class_name, all_results)
-        extras = {r.algorithm: r for r in all_results_with_algoname}
+        extras = {r.algorithm: r for r in all_results}
         return extras
 
+    @staticmethod
+    def _get_algorithm_name(algo):
+        return type(algo).__name__
