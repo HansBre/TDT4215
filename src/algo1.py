@@ -1,4 +1,5 @@
 import argparse
+from os import path
 from surprise import Dataset
 from surprise import Reader
 from surprise import SVD
@@ -47,7 +48,7 @@ algo = Hybrid(
         # Singular Value Decomposition (SVD) is used for this example
         AlgorithmTuple(SVD(), 1),
     ),
-    'spool',
+    path.join(path.dirname(path.dirname(__file__)), 'spool'),
 )
 
 n_folds = 5
