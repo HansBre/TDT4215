@@ -4,10 +4,12 @@ algorithms.
 """
 from itertools import chain
 
+import gc
+from os import path, getpid
 import operator
 from collections import namedtuple
 from functools import reduce
-from surprise import AlgoBase, PredictionImpossible
+from surprise import AlgoBase, PredictionImpossible, dump
 
 
 """
@@ -31,24 +33,68 @@ class Hybrid(AlgoBase):
     Algorithm combining multiple algorithms into a hybrid system.
     """
 
-    def __init__(self, algorithms, **kwargs):
+    def __init__(self, algorithms, spool_dir = None, **kwargs):
         """
         Set up which algorithms make up this hybrid algorithm.
 
         Args:
             algorithms: List of AlgorithmTuple. Each tuple consists of an
                 algorithm instance and a weight.
+            spool_dir: Path to directory where algorithms can be stored on disk.
+                The default disables memory conserving techniques.
             **kwargs: Extra keyword arguments for the AlgoBase constructor.
         """
         super().__init__(**kwargs)
-        self.algorithms = algorithms
+        self.algorithms = list(algorithms)
+        self.spool_dir = spool_dir
 
         weights = map(lambda a: a.weight, algorithms)
         weights_without_inf = filter(lambda w: w != float('inf'), weights)
         self.sum_weights = sum(weights_without_inf)
         self.trainset = None
 
+    def _write(self, index):
+        if self.spool_dir:
+            dump.dump(self._file_for(index), algo=self.algorithms[index].algorithm)
+
+    def _close(self, index):
+        if not self.spool_dir:
+            return
+
+        weight = self.algorithms[index].weight
+
+        def load():
+            _, loaded_algo = dump.load(self._file_for(index))
+            return AlgorithmTuple(loaded_algo, weight)
+
+        self.algorithms[index] = load
+        gc.collect()
+
+    def _open(self, index):
+        if not self.spool_dir:
+            return self.algorithms[index]
+
+        instance = self.algorithms[index]
+
+        if callable(instance):
+            self.algorithms[index] = instance()
+
+        return self.algorithms[index]
+
+    def _file_for(self, index):
+        abs_dir = path.abspath(self.spool_dir)
+        filename = "serialized_{pid}_{index}"\
+            .format(pid=getpid(), index=index)
+        return path.join(abs_dir, filename)
+
+    def cleanup(self):
+        if not self.spool_dir:
+            return
+
+        # TODO: Remove all files that pertain to this instance
+
     def fit(self, trainset):
+        # TODO: Use the _open and _close methods
         # Propagate the fit call to all algorithms that make up this algorithm
         self.trainset = trainset
         for algorithm, _ in self.algorithms:
@@ -56,6 +102,8 @@ class Hybrid(AlgoBase):
         return self
 
     def estimate(self, u, i):
+        # TODO: Use the _open and _close methods
+        # TODO: Use algorithm name earlier, so we don't reference the instance
         # Let each algorithm make its prediction, and register the result
         results, rejected_results, total_weights = self.run_child_algos(u, i)
 
