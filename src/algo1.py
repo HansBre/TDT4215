@@ -40,7 +40,7 @@ parser.add_argument(
 
 parser.add_argument(
     '--verbose', '-v',
-    help='When given prints median error per fold',
+    help='Verbose',
     action='store_true',
 )
 
@@ -72,8 +72,14 @@ if args.csv:
         raise
 
 try:
+    if args.verbose:
+        print("Starting Folding")
+    n_fold = 0
     sum_precision, sum_recall, sum_f1, sum_roc_auc_score = 0, 0, 0, 0
     for trainset, testset in kf.split(data):
+        n_fold += 1
+        if args.verbose:
+            print("Starting Fold", n_fold)
         algo.fit(trainset)
         predictions = algo.test(testset)
 
