@@ -1,5 +1,6 @@
 from collections import defaultdict
 
+
 def get_top_n(predictions, n=10):
     '''Return the top-N recommendation for each user from a set of predictions.
     Args:
@@ -25,7 +26,7 @@ def get_top_n(predictions, n=10):
     return top_n
 
 
-def precision_recall_at_k(predictions, k=10, threshold=2.5):
+def precision_recall_at_k(predictions, k=20, threshold=2.5):
     # Return precision and recall at k metrics for each user.
     # We say that an article is relevant IF its estimation is above our threshold.
 
@@ -55,7 +56,8 @@ def precision_recall_at_k(predictions, k=10, threshold=2.5):
         precisions[uid] = n_rel_and_rec_k / n_rec_k if n_rec_k != 0 else 1
 
         # Recall@K: Proportion of relevant items that are recommended
-        recalls[uid] = n_rel_and_rec_k / n_rel if n_rel != 0 else 1
+        if n_rel != 0:
+            recalls[uid] = n_rel_and_rec_k / n_rel
 
     return precisions, recalls
 

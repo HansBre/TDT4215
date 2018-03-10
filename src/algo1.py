@@ -57,8 +57,12 @@ algo = Hybrid(
     path.join(path.dirname(path.dirname(__file__)), 'spool'),
 )
 
-n_folds = 5
+n_folds = 2
 kf = KFold(n_splits=n_folds)
+
+# Threshold for saying an article is relevant for a user or not.
+# If estimated rating is higher than threshold, we say article is relevant for that user, else not.
+rating_threshold = 2.5
 
 if args.csv:
     output_file = open(args.csv, 'wt', newline='')
@@ -102,21 +106,23 @@ try:
 
         if args.metrics:
             # Evaluate Metrics
-            precision_pr_user, recall_pr_user = precision_recall_at_k(predictions)
+            precision_pr_user, recall_pr_user = precision_recall_at_k(predictions, threshold=rating_threshold)
             fold_average_precision = np.average(list(precision_pr_user.values()))
             fold_average_recall = np.average(list(recall_pr_user.values()))
             fold_average_f1 = get_f1(fold_average_precision, fold_average_recall)
-            # Build prediction sets grouped by user for roc_auc metric evaluation
+            # Build prediction sets grouped by user for roc_auc metric evaluation & MHRH
             true, test = [], []
             users_predictions = dict()
             for prediction in predictions:
-                true.append(prediction.r_ui)
-                test.append(prediction.est)
+                is_relevant = 1 if prediction.r_ui > rating_threshold else 0
+                estimated_relevant = 1 if prediction.est > rating_threshold else 0
+                true.append(is_relevant)
+                test.append(estimated_relevant)
                 if prediction.uid in users_predictions.keys():
                     users_predictions[prediction.uid].append(prediction)
                 else:
                     users_predictions[prediction.uid] = [prediction]
-            # fold_roc_auc_score = roc_auc_score(true, test)
+            fold_roc_auc_score = roc_auc_score(true, test)
 
             # MHRH TODO
             # for user_id, predictions in users_predictions.items():
@@ -126,7 +132,7 @@ try:
             sum_precision += fold_average_precision
             sum_recall += fold_average_recall
             sum_f1 += fold_average_f1
-            # sum_roc_auc_score += fold_roc_auc_score
+            sum_roc_auc_score += fold_roc_auc_score
 
     if args.metrics:
         average_recall = sum_recall / n_folds
@@ -137,8 +143,7 @@ try:
         print("Average Precision:", average_precision)
         print("Average Recall:", average_recall)
         print("Average F1:", average_f1)
-
-        # print("Average ROC AUC:", average_roc_auc)
+        print("Average ROC AUC:", average_roc_auc)
 
 finally:
     if args.csv:
