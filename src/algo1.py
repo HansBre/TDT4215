@@ -3,10 +3,11 @@ from os import path
 from surprise import Dataset
 from surprise import Reader
 from surprise import SVD
-from surprise.model_selection import KFold
+from surprise.model_selection import KFold, train_test_split
+
 import statistics
 import csv
-from tools.prediction_tools import precision_recall_at_k, get_f1
+from tools.prediction_tools import precision_recall_at_k, get_f1, get_top_n
 from sklearn.metrics import roc_auc_score
 import numpy as np
 from src.hybrid import Hybrid, AlgorithmTuple
@@ -74,17 +75,42 @@ if args.csv:
     except Exception:
         output_file.close()
         raise
+trainset = data.build_full_trainset()
+item_gen = trainset.all_items()
+user_gen = trainset.all_users()
+
+""" user_r = trainset.ur[0]
+dic = {}
+for user in user_gen:
+    a = []
+    for item in item_gen:
+        rated = False
+        for iid, rating in trainset.ur[0]:
+            if iid == item:
+                a.append((iid, rating))
+                rated = True
+        if not rated:
+                a.append((item, 0))
+    dic[user] = a
+
+print(len(dic)) """
+
+
 
 try:
     if args.verbose:
         print("Starting Folding")
     n_fold = 0
     sum_precision, sum_recall, sum_f1, sum_roc_auc_score = 0, 0, 0, 0
+    """ 
     for trainset, testset in kf.split(data):
         n_fold += 1
         if args.verbose:
             print("Starting Fold", n_fold)
+        trainset = data.build_full_trainset()
         algo.fit(trainset)
+        full_set = data.build_full_trainset()
+        testset += full_set.build_anti_testset(fill=0)
         predictions = algo.test(testset)
 
         if args.csv:
@@ -132,7 +158,37 @@ try:
             sum_precision += fold_average_precision
             sum_recall += fold_average_recall
             sum_f1 += fold_average_f1
-            sum_roc_auc_score += fold_roc_auc_score
+            sum_roc_auc_score += fold_roc_auc_score """
+
+    trainset = data.build_full_trainset()
+
+    algo.fit(trainset)
+
+    user_top_10 = {}
+    n = 0
+    batch = 100
+    while n < trainset.n_users:
+        anti_testset = []
+        for u in range(n, n + batch):
+            try:
+                user_items = set([j for (j, _) in trainset.ur[u]])
+                anti_testset += [(trainset.to_raw_uid(u), trainset.to_raw_iid(i), 0.0) for
+                                i in trainset.all_items() if
+                                i not in user_items]
+            except ValueError:
+                # This means we have gone through all the users
+                break
+
+        predictions = algo.test(anti_testset)
+        top_n = get_top_n(predictions, n=10)
+
+            # Print the recommended items for each user
+        for uid, user_ratings in top_n.items():
+            #print(uid, [est for (iid, est) in user_ratings])
+            user_top_10[uid] = user_ratings
+        n += batch
+        print("done with %i users" % n) 
+
 
     if args.metrics:
         average_recall = sum_recall / n_folds
