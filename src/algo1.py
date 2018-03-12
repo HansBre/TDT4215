@@ -161,10 +161,13 @@ try:
             sum_roc_auc_score += fold_roc_auc_score """
 
     trainset = data.build_full_trainset()
-
     algo.fit(trainset)
 
-    user_top_10 = {}
+
+    # This is where we'll store our top 10 predictions per user
+    # ex. users_top_10
+    users_top_10 = {} 
+   
     n = 0
     batch = 100
     while n < trainset.n_users:
@@ -182,10 +185,8 @@ try:
         predictions = algo.test(anti_testset)
         top_n = get_top_n(predictions, n=10)
 
-            # Print the recommended items for each user
         for uid, user_ratings in top_n.items():
-            #print(uid, [est for (iid, est) in user_ratings])
-            user_top_10[uid] = user_ratings
+            users_top_10[uid] = user_ratings
         n += batch
         print("done with %i users" % n) 
 
