@@ -108,6 +108,22 @@ class FulltextDb:
         self._query_bundling_size = query_bundling_size
         self._worker = None
 
+    def get(self, document_id, columns=None):
+        cursor = self._conn.cursor(dictionary=True)
+        if columns is None:
+            column_str = '*'
+        else:
+            column_str = ', '.join(columns)
+        query = 'SELECT {columns} FROM article WHERE id=%s'.format(
+            columns=column_str
+        )
+        cursor.execute(query, (document_id,))
+        cursor.commit()
+        for row in cursor:
+            return row
+        else:
+            raise ValueError('No entry found for document id ' + document_id)
+
     def update(self, tar_path, columns, update_func, verbose=True):
         """
         Analyze the fulltext information and update the entries in the database.
@@ -194,6 +210,7 @@ class FulltextDb:
             try:
                 num = len(bundled_queries)
                 cursor.executemany(query, bundled_queries)
+                conn.commit()
                 bundled_queries.clear()
                 for _ in range(num):
                     query_queue.task_done()
