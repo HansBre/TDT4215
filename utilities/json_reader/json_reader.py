@@ -21,12 +21,17 @@ def explorer():
 
     with open_func(app.config.get('json_file'), 'rt', encoding='utf8') as fp:
         lines_read = 0
-        while lines_read < first_row:
-            fp.readline()
+        last_read_line = None
+        while lines_read < first_row and last_read_line != '':
+            last_read_line = fp.readline()
             lines_read += 1
+
         lines = []
         while lines_read < last_row:
-            lines.append(fp.readline())
+            this_line = fp.readline()
+            if this_line == '':
+                break
+            lines.append(this_line)
             lines_read += 1
     output = "[" + ", ".join(lines) + "]"
     res = make_response(output)
