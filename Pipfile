@@ -9,6 +9,8 @@ name = "pypi"
 
 scikit-learn = "*"
 scikit-surprise = "*"
+mysql-connector-python = "*"
+clint = "*"
 
 
 [dev-packages]

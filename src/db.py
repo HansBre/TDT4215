@@ -4,11 +4,12 @@ import json
 import traceback
 import threading
 import queue
+from getpass import getpass
 import mysql.connector
 from clint.textui import progress
 
 
-def iterate_tar(archive):
+def _iterate_tar(archive):
     """
     Iterate through members of the tar archive.
 
@@ -24,7 +25,7 @@ def iterate_tar(archive):
         member = archive.next()
 
 
-def iterate_contentdata(tar_path, verbose=True):
+def _iterate_contentdata(tar_path, verbose=True):
     """
     Iterate through the content files in the contentdata.tar.gz.
 
@@ -40,17 +41,20 @@ def iterate_contentdata(tar_path, verbose=True):
                          .format(tar_path=tar_path))
 
     if verbose:
-        print('Opening tar file {tar_path'.format(tar_path=tar_path))
+        print('Opening tar file {tar_path}'.format(tar_path=tar_path))
 
     with tarfile.open(tar_path) as archive:
-        if verbose:
-            print('Calculating number of members…')
-        total_num = len(archive.getmembers())
+        #if verbose:
+        #    print('Calculating number of members…')
+        #total_num = len(archive.getmembers())
+        # We know how many files there are -- finding this out dynamically
+        # requires that we decompress the entire file.
+        total_num = 93950
         num_errors = 0
         num_processed = 0
 
         for member in progress.bar(
-                iterate_tar(archive),
+                _iterate_tar(archive),
                 expected_size=total_num,
                 hide=not verbose
         ):
@@ -69,6 +73,8 @@ def iterate_contentdata(tar_path, verbose=True):
                         # Process the first line of JSON
                         first_line = textfile.readline().strip()
                         parsed = json.loads(first_line)
+                        if parsed is None:
+                            continue
                         # Make it possible to easily look up a specific field,
                         # by making the list of pairs into a dictionary
                         fields = parsed.get('fields', [])
@@ -90,7 +96,13 @@ def iterate_contentdata(tar_path, verbose=True):
 
 
 class FulltextDb:
-    def __init__(self, query_bundling_size=50, query_queue_size=150, **kwargs):
+    whitelisted_columns = [
+        'id',
+        'word_count',
+        'published',
+    ]
+
+    def __init__(self, query_bundling_size=500, query_queue_size=1010, **kwargs):
         """
         Create new instance of FulltextDb, capable of adding and quering
         fulltext metadata.
@@ -109,6 +121,19 @@ class FulltextDb:
         self._worker = None
 
     def get(self, document_id, columns=None):
+        """
+        Get the database entry for one document.
+
+        Args:
+            document_id: The document ID to look up.
+            columns: List of columns to fetch. Leave out to fetch all columns.
+
+        Returns:
+            Dictionary where key is column name and value is that column value.
+
+        Raises:
+            ValueError When no entry for the given document ID was found.
+        """
         cursor = self._conn.cursor(dictionary=True)
         if columns is None:
             column_str = '*'
@@ -118,13 +143,45 @@ class FulltextDb:
             columns=column_str
         )
         cursor.execute(query, (document_id,))
+        result = cursor.fetchall()
         cursor.commit()
-        for row in cursor:
-            return row
+        cursor.close()
+        if result:
+            return result[0]
         else:
             raise ValueError('No entry found for document id ' + document_id)
 
-    def update(self, tar_path, columns, update_func, verbose=True):
+    def get_all(self, columns=None):
+        """
+        Fetch database entries for all known documents.
+
+        Args:
+            columns: List of columns to fetch. Leave out to fetch all columns.
+
+        Returns:
+            Dictionary where key is document ID and value is a dictionary in the
+            same format as for get() if the document ID is among the columns
+            fetched. List of dictionaries if the ID is not among the columns.
+        """
+        cursor = self._conn.cursor(dictionary=True)
+        if columns is None:
+            column_str = '*'
+        else:
+            column_str = ', '.join(columns)
+        query = 'SELECT {columns} FROM article'.format(columns=column_str)
+        cursor.execute(query)
+        if columns is None or 'id' in columns:
+            result = dict()
+            for row in cursor:
+                result[row['id']] = row
+        else:
+            result = cursor.fetchall()
+        cursor.commit()
+        cursor.close()
+        return result
+
+    def update(self, tar_path, columns, update_func, verbose=True,
+               overwrite=False):
         """
         Analyze the fulltext information and update the entries in the database.
 
@@ -139,6 +196,9 @@ class FulltextDb:
                 key corresponds to database column and value is the value to
                 set that column to. Return None to skip.
             verbose: Print progress information to stdout when set to True.
+            overwrite: When set to True, rows already populated in the database
+                will be re-evaluated. When set to False, rows where the given
+                columns are already filled will be skipped.
         """
         if 'id' not in columns:
             columns.append('id')
@@ -146,12 +206,43 @@ class FulltextDb:
         query = self._create_insert_query(columns)
         self._start_db_worker(query)
 
-        for fulltext in iterate_contentdata(tar_path, verbose):
-            new_data = update_func(fulltext)
+        skipped = 0
+
+        if overwrite:
+            populated_ids = set()
+        else:
+            populated_ids = self._get_ids_with_columns(columns)
+
+        if verbose:
+            print('Please note that at article 69363, the process will seem to '
+                  'have frozen. This is normal and is an artifact of the '
+                  'archive, which includes a giant file which must be scanned '
+                  'past. The process should resume, given enough time.')
+        for fulltext in _iterate_contentdata(tar_path, verbose):
+            if 'id' not in fulltext:
+                continue
+            if fulltext['id'] in populated_ids:
+                continue
+
+            try:
+                new_data = update_func(fulltext)
+            except KeyboardInterrupt:
+                print('Waiting for DB worker to finish…')
+                self._stop_db_worker()
+                raise
+            except Exception:
+                traceback.print_exc()
+                continue
+
             if new_data is None:
+                skipped += 1
                 continue
             new_data['id'] = fulltext['id']
             self._add_insert_query(new_data, columns)
+
+        if verbose:
+            print('Done with the loop, writing the last changes. We skipped {}'
+                  ' articles due to None from update_func'.format(skipped))
 
         self._stop_db_worker()
 
@@ -204,29 +295,33 @@ class FulltextDb:
         conn = mysql.connector.connect(**connection_details)
         cursor = conn.cursor()
 
-        bundled_queries = []
+        try:
+            bundled_queries = []
 
-        def run_bundle():
-            try:
-                num = len(bundled_queries)
-                cursor.executemany(query, bundled_queries)
-                conn.commit()
-                bundled_queries.clear()
-                for _ in range(num):
-                    query_queue.task_done()
-            except mysql.connector.Error:
-                traceback.print_exc()
+            def run_bundle():
+                try:
+                    num = len(bundled_queries)
+                    cursor.executemany(query, bundled_queries)
+                    conn.commit()
+                    bundled_queries.clear()
+                    for _ in range(num):
+                        query_queue.task_done()
+                except mysql.connector.Error:
+                    traceback.print_exc()
 
-        while True:
-            params = query_queue.get()
-            if params is None:
-                break
-            bundled_queries.append(params)
-            if len(bundled_queries) >= query_bundling_size:
+            while True:
+                params = query_queue.get()
+                if params is None:
+                    break
+                bundled_queries.append(params)
+                if len(bundled_queries) >= query_bundling_size:
+                    run_bundle()
+
+            if bundled_queries:
                 run_bundle()
-
-        if bundled_queries:
-            run_bundle()
+        finally:
+            cursor.close()
+            conn.close()
 
     def _stop_db_worker(self):
         """
@@ -236,6 +331,16 @@ class FulltextDb:
         if self._worker is not None:
             self._worker.join()
             self._worker = None
+
+    def _get_ids_with_columns(self, columns):
+        cursor = self._conn.cursor(dictionary=True)
+        cursor.execute(self._create_fetch_id_query(columns))
+        ids = set()
+        for row in cursor:
+            ids.add(row['id'])
+        self._conn.commit()
+        cursor.close()
+        return ids
 
     @staticmethod
     def _create_insert_query(columns):
@@ -250,16 +355,13 @@ class FulltextDb:
         Returns:
             str The generated query, which can be given to the DB worker.
         """
-        whitelisted_columns = [
-            'id',
-            'word_count',
-            'published',
-        ]
         query_format = (
             "INSERT INTO articles ({columns}) VALUES ({placeholders}) "
             "ON DUPLICATE KEY UPDATE {update_clause}"
         )
-        all_columns = [col for col in columns if col in whitelisted_columns]
+        all_columns = [col
+                       for col in columns
+                       if col in FulltextDb.whitelisted_columns]
         if 'id' not in all_columns:
             raise ValueError('The column id must be provided')
 
@@ -280,6 +382,89 @@ class FulltextDb:
             update_clause=update_clause
         )
         return query
+
+    @staticmethod
+    def _create_fetch_id_query(columns):
+        """
+        Create a selection query for the article IDs that are already filled
+        for the given columns.
+
+        Args:
+            columns: List of columns which should be checked for not being
+                equal to NULL.
+
+        Returns:
+            Set of article IDs that already have a value for the given columns.
+        """
+        all_columns = [col
+                       for col in columns
+                       if col in FulltextDb.whitelisted_columns]
+        if len(all_columns) != len(columns):
+            raise ValueError('Some columns were not recognized')
+        all_columns.remove('id')
+
+        conditions = filter(lambda c: '{} IS NOT NULL', all_columns)
+        where_clause = ' AND '.join(conditions)
+        query = "SELECT id FROM articles WHERE " + where_clause
+        return query
+
+    @staticmethod
+    def populate_argparser(parser):
+        """
+        Add arguments to the given ArgumentParser for database connection info.
+
+        Warning: You must set add_help to False when creating the
+        ArgumentParser, because -h conflicts with the MySQL argument for host.
+        The usual --help argument is added by this method.
+
+        Args:
+            parser: Instance of ArgumentParser which should be populated with
+                extra arguments for collecting database connection details.
+        """
+        parser.add_argument('--help', '-?', '-I', action='help',
+                            help='Print this help message and exit.')
+        parser.add_argument('--host', '-h', help='Host where the database is '
+                                                 'located.')
+        parser.add_argument('--user', '-u', help='Username to use when connecting '
+                                                 'to the database.')
+        parser.add_argument('--password', help='Password to log in with.')
+        parser.add_argument('-p', '--prompt-password', action='store_true',
+                            help='Prompt for password when running.')
+        parser.add_argument('database', help='Database to connect to.')
+
+    @staticmethod
+    def create_from_args(args, **kwargs):
+        """
+        Create a new instance of FulltextDb with arguments from the user.
+
+        Args:
+            args: The arguments given by the user, as returned by
+                ArgumentParser.parse_args().
+            **kwargs: Additional arguments to give to FulltextDb.
+
+        Returns:
+            New instance of FulltextDb with connection details set by looking
+            at the user-supplied details. Additional options are set from the
+            additional kwargs given.
+        """
+        config = dict(kwargs)
+
+        if args.user:
+            config['user'] = args.user
+
+        if args.password:
+            config['password'] = args.password
+
+        elif args.prompt_password:
+            config['password'] = getpass()
+
+        if args.host:
+            config['host'] = args.host
+
+        if args.database:
+            config['database'] = args.database
+
+        return FulltextDb(**config)
 
     def close(self):
         """
