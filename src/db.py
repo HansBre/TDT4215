@@ -139,12 +139,12 @@ class FulltextDb:
             column_str = '*'
         else:
             column_str = ', '.join(columns)
-        query = 'SELECT {columns} FROM article WHERE id=%s'.format(
+        query = 'SELECT {columns} FROM articles WHERE id=%s'.format(
             columns=column_str
         )
         cursor.execute(query, (document_id,))
         result = cursor.fetchall()
-        cursor.commit()
+        self._conn.commit()
         cursor.close()
         if result:
             return result[0]
@@ -168,7 +168,7 @@ class FulltextDb:
             column_str = '*'
         else:
             column_str = ', '.join(columns)
-        query = 'SELECT {columns} FROM article'.format(columns=column_str)
+        query = 'SELECT {columns} FROM articles'.format(columns=column_str)
         cursor.execute(query)
         if columns is None or 'id' in columns:
             result = dict()
@@ -176,7 +176,7 @@ class FulltextDb:
                 result[row['id']] = row
         else:
             result = cursor.fetchall()
-        cursor.commit()
+        self._conn.commit()
         cursor.close()
         return result
 
@@ -449,6 +449,9 @@ class FulltextDb:
         """
         config = dict(kwargs)
 
+        if args.host:
+            config['host'] = args.host
+
         if args.user:
             config['user'] = args.user
 
@@ -456,10 +459,13 @@ class FulltextDb:
             config['password'] = args.password
 
         elif args.prompt_password:
-            config['password'] = getpass()
-
-        if args.host:
-            config['host'] = args.host
+            config['password'] = getpass(
+                'Password for {}@{}: '
+                .format(
+                    config.get('user', 'nobody'),
+                    config.get('host', 'localhost')
+                )
+            )
 
         if args.database:
             config['database'] = args.database
