@@ -1,4 +1,6 @@
 import argparse
+from math import inf
+from datetime import datetime
 from os import path
 from surprise import Dataset
 from surprise import Reader
@@ -9,14 +11,18 @@ import csv
 from tools.prediction_tools import precision_recall_at_k, get_f1
 from sklearn.metrics import roc_auc_score
 import numpy as np
-from src.hybrid import Hybrid, AlgorithmTuple
+from src.hybrid import Hybrid, AlgorithmTuple, AlgorithmResult
+from src.db import FulltextDb
+from src.datefactor import DateFactor
 
 
 parser = argparse.ArgumentParser(
     description='Make predictions using the SVD algorithm. '
                 'Prints median prediction error per split. '
                 'The active time is the variable being predicted.',
+    add_help=False,
 )
+FulltextDb.populate_argparser(parser)
 parser.add_argument(
     '--input', '-i',
     help='Preprocessed file with user, item and active time. '
@@ -53,6 +59,10 @@ algo = Hybrid(
     (
         # Singular Value Decomposition (SVD) is used for this example
         AlgorithmTuple(SVD(), 1),
+        AlgorithmTuple(DateFactor(
+            FulltextDb.create_from_args(args),
+            cut_after=datetime(2017, 1, 8),  # Change if using three-week set
+        ), inf)
     ),
     path.join(path.dirname(path.dirname(__file__)), 'spool'),
 )
@@ -67,7 +77,8 @@ rating_threshold = 2.5
 if args.csv:
     output_file = open(args.csv, 'wt', newline='')
     try:
-        fields = ['uid', 'iid', 'estimated', 'actual', 'error']
+        algorithms = ['SVD', 'DateFactor']
+        fields = ['uid', 'iid', 'estimated', *algorithms, 'actual', 'error']
         csv_writer = csv.DictWriter(output_file, fieldnames=fields,
                                     dialect='unix')
         csv_writer.writeheader()
@@ -92,10 +103,15 @@ try:
                 return str(f).replace('.', ',')
 
             for p in predictions:
+                details = p.details
+                individual_p = {res.algorithm_name: float2csv(res.prediction)
+                                for res in details.values()
+                                if isinstance(res, AlgorithmResult)}
                 csv_writer.writerow({
                     'uid': p.uid,
                     'iid': p.iid,
                     'estimated': float2csv(p.est),
+                    **individual_p,
                     'actual': float2csv(p.r_ui),
                     'error': float2csv(abs(p.est-p.r_ui)),
                 })
