@@ -44,6 +44,14 @@ parser.add_argument(
     action='store_true',
 )
 
+
+def is_relevant(testset_by_user, uid, iid):
+    if uid in testset_by_user and iid in testset_by_user[uid]:
+        if testset_by_user[uid][iid] >= relevance_threshold:
+            return True
+    return False
+
+
 args = parser.parse_args()
 
 reader = Reader(line_format='user item rating', sep='\t')
@@ -60,11 +68,17 @@ algo = Hybrid(
 n_folds = 2
 kf = KFold(n_splits=n_folds)
 
-num_testing_batches = 1
+num_testing_batches = 10
 
 # Threshold for saying an article is relevant for a user or not.
 # If estimated rating is higher than threshold, we say article is relevant for that user, else not.
-rating_threshold = 2.5
+relevance_threshold = 2.5
+
+# Get all article keywords
+# keywords = dict()
+# for line in open('article_keywords'):
+# values = line.split('*-*')
+# keywords[values[0]] = values[1]
 
 if args.csv:
     output_file = open(args.csv, 'wt', newline='')
@@ -97,70 +111,14 @@ try:
     if args.verbose:
         print("Starting Folding")
     n_fold = 0
-    sum_precision, sum_recall, sum_f1, sum_roc_auc_score, sum_ctr = 0, 0, 0, 0, 0
+    sum_precision, sum_recall, sum_f1, sum_roc_auc_score, sum_ctr, sum_mhrh = 0, 0, 0, 0, 0, 0
 
     for trainset, testset in kf.split(data):
         n_fold += 1
-        print("Fold", n_fold)
+        if args.verbose:
+            print("Fold", n_fold)
         item_gen = trainset.all_items()
         user_gen = trainset.all_users()
-        """ 
-        for trainset, testset in kf.split(data):
-            n_fold += 1
-            if args.verbose:
-                print("Starting Fold", n_fold)
-            trainset = data.build_full_trainset()
-            algo.fit(trainset)
-            full_set = data.build_full_trainset()
-            testset += full_set.build_anti_testset(fill=0)
-            predictions = algo.test(testset)
-    
-            if args.csv:
-                def float2csv(f):
-                    return str(f).replace('.', ',')
-    
-                for p in predictions:
-                    csv_writer.writerow({
-                        'uid': p.uid,
-                        'iid': p.iid,
-                        'estimated': float2csv(p.est),
-                        'actual': float2csv(p.r_ui),
-                        'error': float2csv(abs(p.est-p.r_ui)),
-                    })
-            else:
-                errors = map(lambda p: abs(p.r_ui - p.est), predictions)
-                if args.verbose:
-                    print("Avg. Rating Error:", statistics.median(errors))
-    
-            if args.metrics:
-                # Evaluate Metrics
-                precision_pr_user, recall_pr_user = precision_recall_at_k(predictions, threshold=rating_threshold)
-                fold_average_precision = np.average(list(precision_pr_user.values()))
-                fold_average_recall = np.average(list(recall_pr_user.values()))
-                fold_average_f1 = get_f1(fold_average_precision, fold_average_recall)
-                # Build prediction sets grouped by user for roc_auc metric evaluation & MHRH
-                true, test = [], []
-                users_predictions = dict()
-                for prediction in predictions:
-                    is_relevant = 1 if prediction.r_ui > rating_threshold else 0
-                    estimated_relevant = 1 if prediction.est > rating_threshold else 0
-                    true.append(is_relevant)
-                    test.append(estimated_relevant)
-                    if prediction.uid in users_predictions.keys():
-                        users_predictions[prediction.uid].append(prediction)
-                    else:
-                        users_predictions[prediction.uid] = [prediction]
-                fold_roc_auc_score = roc_auc_score(true, test)
-    
-                # MHRH TODO
-                # for user_id, predictions in users_predictions.items():
-                    # predictions.sort(key=lambda x: x.est, reverse=True)
-                    # Now we chan calculate mhrh over the first k elements in the sorted list.
-    
-                sum_precision += fold_average_precision
-                sum_recall += fold_average_recall
-                sum_f1 += fold_average_f1
-                sum_roc_auc_score += fold_roc_auc_score """
 
         algo.fit(trainset)
 
@@ -173,10 +131,14 @@ try:
 
             # t[0] = uid, t[1] = article id, t[2] = true rating
             if t[0] in testset_by_user:
-                testset_by_user[t[0]].append(tuple(t))
+                testset_by_user[t[0]]['raw'].append(tuple(t))
             else:
-                testset_by_user[t[0]] = [t]
+                raw_tuples = [t]
+                testset_by_user[t[0]] = dict()
+                # Now we can find true rating from user and artcle id to determine relevance.
+                testset_by_user[t[0]]['raw'] = raw_tuples
                 articles_clicked_by_user[t[0]] = set()
+            testset_by_user[t[0]][t[1]] = t[2]
             articles_clicked_by_user[t[0]].add(t[1])
 
         # This is where we'll store our top 10 predictions per user
@@ -186,12 +148,14 @@ try:
         n = 0
         batch = 100
         b = 0
+        fold_sum_mhrh = 0
 
         # while n < trainset.n_users:
         while n < (num_testing_batches * batch):
             batch_testset = []
             b += 1
-            print('Starting building batch', b)
+            if (args.verbose):
+                print('Starting building batch', b)
             for u in range(n, n + batch):
                 try:
                     user_items = set([j for (j, _) in trainset.ur[u]])
@@ -199,27 +163,41 @@ try:
                                       i in trainset.all_items() if
                                       i not in user_items]
                     if trainset.to_raw_uid(u) in batch_testset:
-                        batch_testset += testset_by_user[trainset.to_raw_uid(u)]
+                        batch_testset += testset_by_user[trainset.to_raw_uid(u)]['raw']
 
                 except ValueError:
                     # This means we have gone through all the users
                     break
-            print('Starting testing')
+            if (args.verbose):
+                print('Starting testing')
             predictions = algo.test(batch_testset)
-            print('Getting top_n')
+            if (args.verbose):
+                print('Getting top_n')
             top_n = get_top_n(predictions, n=10)
 
             for uid, user_ratings in top_n.items():
                 users_top_10[uid] = user_ratings
 
-            print('Calculating metrics for batch')
             if args.metrics:
+                if (args.verbose):
+                    print('Calculating metrics for batch')
                 # Evaluate Metrics
                 # CTR
                 batch_sum_ctr = 0
+
                 for uid in users_top_10:
                     clicks = 0
-                    for article_id, rating in users_top_10[uid]:
+                    # Investigate correlations between recomennded articles keywords
+                    # for iid, _ in users_top_10[uid]:
+                    # print(keywords[iid])
+                    user_mhrh_sum = 0
+                    denominator = 1
+                    for article_id, _ in users_top_10[uid]:  # mhrh & ctr
+                        numerator = 1 if is_relevant(testset_by_user, uid, article_id) else 0
+                        fraction = numerator / denominator
+                        user_mhrh_sum += fraction
+                        denominator += 1
+                        fold_sum_mhrh += user_mhrh_sum
                         if uid in articles_clicked_by_user:
                             if article_id in articles_clicked_by_user[uid]:
                                 clicks += 1
@@ -228,7 +206,7 @@ try:
                 fold_average_ctr = batch_sum_ctr / batch
 
                 # Precision Recall
-                precision_pr_user, recall_pr_user = precision_recall_at_k(predictions, k=10, threshold=rating_threshold)
+                precision_pr_user, recall_pr_user = precision_recall_at_k(predictions, k=10, threshold=relevance_threshold)
                 fold_average_precision = np.average(list(precision_pr_user.values()))
                 fold_average_recall = np.average(list(recall_pr_user.values())) if len(
                     list(recall_pr_user.values())) > 0 else 1
@@ -236,11 +214,10 @@ try:
 
                 # Build prediction sets grouped by user for roc_auc metric evaluation & MHRH
                 true, test = [], []
-                users_predictions = dict()
                 for prediction in predictions:
-                    is_relevant = 1 if prediction.r_ui > rating_threshold else 0
-                    estimated_relevant = 1 if prediction.est > rating_threshold else 0
-                    true.append(is_relevant)
+                    relevant = 1 if prediction.r_ui > relevance_threshold else 0
+                    estimated_relevant = 1 if prediction.est > relevance_threshold else 0
+                    true.append(relevant)
                     test.append(estimated_relevant)
 
                 # Add for Kfold average
@@ -248,6 +225,7 @@ try:
                 sum_recall += fold_average_recall
                 sum_f1 += fold_average_f1
                 sum_ctr += fold_average_ctr
+                sum_mhrh += fold_sum_mhrh
                 # sum_roc_auc_score += fold_roc_auc_score
             n += batch
         # print(round(n / trainset.n_users, 4), "%", end='       \r')
@@ -260,12 +238,14 @@ try:
         average_f1 = sum_f1 / (n_folds * num_testing_batches)
         average_roc_auc = sum_roc_auc_score / (n_folds * num_testing_batches)
         average_ctr = sum_ctr / (n_folds * num_testing_batches)
+        average_mhrh = sum_mhrh / (n_fold * num_testing_batches * 100)
         print("---RESULT---")
         print("Average Precision:", average_precision)
         print("Average Recall:", average_recall)
         print("Average F1:", average_f1)
         print("Average ROC AUC:", average_roc_auc)
         print("Average CTR:", average_ctr)
+        print("Average MHRH:", average_mhrh)
 
 finally:
     if args.csv:

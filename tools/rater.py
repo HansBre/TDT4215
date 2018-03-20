@@ -14,3 +14,4 @@ def rate_article(user_keywords, article):
                     if rating == 5:
                         return rating
     return rating
+
