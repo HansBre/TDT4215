@@ -423,6 +423,12 @@ class FulltextDb:
         """
         parser.add_argument('--help', '-?', '-I', action='help',
                             help='Print this help message and exit.')
+        parser.add_argument('--option-file', action='append',
+                            help='Option file to use instead of specifying '
+                                 'MySQL connection options on the command '
+                                 'line. See the MySQL documentation. You may '
+                                 'use this multiple times to specify '
+                                 'multiple option files to read.')
         parser.add_argument('--host', '-h', help='Host where the database is '
                                                  'located.')
         parser.add_argument('--user', '-u', help='Username to use when connecting '
@@ -430,7 +436,8 @@ class FulltextDb:
         parser.add_argument('--password', help='Password to log in with.')
         parser.add_argument('-p', '--prompt-password', action='store_true',
                             help='Prompt for password when running.')
-        parser.add_argument('database', help='Database to connect to.')
+        parser.add_argument('database', help='Database to connect to.',
+                            default=None, nargs='?')
 
     @staticmethod
     def create_from_args(args, **kwargs):
@@ -448,6 +455,9 @@ class FulltextDb:
             additional kwargs given.
         """
         config = dict(kwargs)
+
+        if args.option_file:
+            config['option_files'] = args.option_file
 
         if args.host:
             config['host'] = args.host
