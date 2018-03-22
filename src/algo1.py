@@ -71,12 +71,13 @@ if args.seed is not None:
 reader = Reader(line_format='user item rating', sep='\t')
 data = Dataset.load_from_file(args.input, reader=reader)
 
+db = FulltextDb.create_from_args(args)
 algo = Hybrid(
     (
         # Singular Value Decomposition (SVD) is used for this example
         AlgorithmTuple(SVD(), 1),
         AlgorithmTuple(DateFactor(
-            FulltextDb.create_from_args(args),
+            db,
             cut_after=datetime(2017, 1, 8),  # Change if using three-week set
             oldest_date=datetime(2013, 1, 1),
             weight=0.5,
@@ -84,6 +85,8 @@ algo = Hybrid(
     ),
     path.join(path.dirname(path.dirname(__file__)), 'spool'),
 )
+db.close()
+del db
 
 n_folds = 2
 kf = KFold(n_splits=n_folds)
