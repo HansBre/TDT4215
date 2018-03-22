@@ -62,6 +62,8 @@ algo = Hybrid(
         AlgorithmTuple(DateFactor(
             FulltextDb.create_from_args(args),
             cut_after=datetime(2017, 1, 8),  # Change if using three-week set
+            oldest_date=datetime(2013, 1, 1),
+            weight=0.5,
         ), inf)
     ),
     path.join(path.dirname(path.dirname(__file__)), 'spool'),

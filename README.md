@@ -47,6 +47,8 @@ Use `--help` to see available arguments.
   <dd>Runnable module which creates files out of the dataset, fit for consumption by the algorithm script.</dd>
   <dt><code>hybrid</code></dt>
   <dd>Library with a hybrid recommender algorithm.</dd>
+  <dt><code>datefactor</code></dt>
+  <dd>Library with an algorithm which weights articles according to their publication date.</dd>
   <dt><code>algo1</code></dt>
   <dd>Runnable module which sets up a hybrid recommender system and runs it using the available dataset, by first training and then testing the algorithm. A number of metrics are collected about the algorithm's performance.</dd>
 </dl>
