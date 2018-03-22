@@ -1,6 +1,8 @@
 import argparse
 from math import inf
 from datetime import datetime
+
+import random
 from os import path
 from surprise import Dataset
 from surprise import Reader
@@ -50,7 +52,21 @@ parser.add_argument(
     action='store_true',
 )
 
+parser.add_argument(
+    '--seed', '-s',
+    help='Random seed to use. Set this to have reproducible experiments, so '
+         'that you can change one variable and keep everything else (folding, '
+         'random initial variables) the same. By default, a new seed is used '
+         'every time.',
+    default=None,
+    type=int,
+)
+
 args = parser.parse_args()
+
+if args.seed is not None:
+    random.seed(args.seed)
+    np.random.seed(args.seed)
 
 reader = Reader(line_format='user item rating', sep='\t')
 data = Dataset.load_from_file(args.input, reader=reader)
