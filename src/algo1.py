@@ -19,9 +19,7 @@ from src.datefactor import DateFactor
 
 
 parser = argparse.ArgumentParser(
-    description='Make predictions using the SVD algorithm. '
-                'Prints median prediction error per split. '
-                'The active time is the variable being predicted.',
+    description='Make predictions using a hybrid algorithm.',
     add_help=False,
 )
 FulltextDb.populate_argparser(parser)
@@ -34,9 +32,9 @@ parser.add_argument(
 parser.add_argument(
     '--csv', '-o',
     help='When given, create a comma separated values file suitable for '
-         'programs like Excel and Libreoffice Calc. Includes item and user ID,'
-         'original active time, predicted active time and difference between '
-         'those two.',
+         'programs like Excel and Libreoffice Calc. Includes item and user ID, '
+         'original rating and predicted ratings from both hybrid and all '
+         'included algorithms.',
     default=False,
 )
 
