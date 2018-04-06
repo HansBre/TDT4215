@@ -20,15 +20,13 @@ parser.add_argument(
     help='File to write user, item and estimated rating to. (Default: %(default)s)',
     default='dataset1.txt',
 )
-'''
-Not currently in use
+
 parser.add_argument(
     '--dataset2', '-2',
     type=argparse.FileType('wt', encoding='utf8'),
     help='File to write user, item and keywords to. (Default: %(default)s)',
     default='dataset2.txt',
 )
-'''
 args = parser.parse_args()
 
 
@@ -67,7 +65,7 @@ def normalize_keyword_preferences(users_dict):
     return users_dict
 
 
-def print_to_output(f, users_dict, o):
+def print_to_output(f, users_dict, o1, o2):
     with input_func(f, 'rt', encoding='utf8') as input_file:
         for line in input_file:
             obj = json.loads(line.strip())
@@ -93,10 +91,10 @@ def print_to_output(f, users_dict, o):
             # If both -> rate by both.
 
             # if not keywords == 'None':
-                # print('\t'.join([uid, iid, keywords]), file=f2)
+                 # print('\t'.join([uid, iid, keywords]), file=o2)
             if not active_time == '0':
                 rating = str(rate_article(users_dict[uid], article))
-                print('\t'.join([uid, iid, rating]), file=o)
+                print('\t'.join([uid, iid, rating]), file=o1)
 
 
 print('>>>Start reading file...')
@@ -120,8 +118,8 @@ users = normalize_keyword_preferences(users)
 if os.path.isdir(args.input):
     for file in os.listdir(args.input):
         print("Printing results from file:", file)
-        print_to_output(os.path.join(args.input, file), users, args.dataset1)
+        print_to_output(os.path.join(args.input, file), users, args.dataset1, args.dataset2)
 else:
-    print_to_output(args.input, users, args.dataset1)
+    print_to_output(args.input, users, args.dataset1, args.dataset2)
 
 print('>>>Done!')

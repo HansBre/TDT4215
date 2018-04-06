@@ -26,7 +26,7 @@ def get_top_n(predictions, n=10):
     return top_n
 
 
-def precision_recall_at_k(predictions, k=20, threshold=2.5):
+def precision_recall_at_k(predictions, k=10, threshold=2.5):
     # Return precision and recall at k metrics for each user.
     # We say that an article is relevant IF its estimation is above our threshold.
 
