@@ -109,6 +109,8 @@ relevance_threshold = 2.5
 # values = line.split('*-*')
 # keywords[values[0]] = values[1]
 
+trainset = data.build_full_trainset()
+
 if args.csv:
     output_file = open(args.csv, 'wt', newline='')
     try:
@@ -120,23 +122,13 @@ if args.csv:
     except Exception:
         output_file.close()
         raise
-
-""" user_r = trainset.ur[0]
+"""
+user_gen = trainset.all_users()
 dic = {}
 for user in user_gen:
-    a = []
-    for item in item_gen:
-        rated = False
-        for iid, rating in trainset.ur[0]:
-            if iid == item:
-                a.append((iid, rating))
-                rated = True
-        if not rated:
-                a.append((item, 0))
-    dic[user] = a
+    print(len(trainset.ur[user]))
 
-print(len(dic)) """
-
+"""
 try:
     if args.verbose:
         print("Starting Folding")
@@ -192,8 +184,10 @@ try:
                     batch_testset += [(trainset.to_raw_uid(u), trainset.to_raw_iid(i), 0.0) for
                                       i in trainset.all_items() if
                                       i not in user_items]
-                    if trainset.to_raw_uid(u) in batch_testset:
+                    try:
                         batch_testset += testset_by_user[trainset.to_raw_uid(u)]['raw']
+                    except KeyError:
+                        continue
 
                 except ValueError:
                     # This means we have gone through all the users
