@@ -133,7 +133,7 @@ try:
     if args.verbose:
         print("Starting Folding")
     n_fold = 0
-    sum_precision, sum_recall, sum_f1, sum_roc_auc_score, sum_ctr, sum_mhrh = 0, 0, 0, 0, 0, 0
+    sum_precision, sum_recall, sum_f1, sum_roc_auc_score, sum_ctr, sum_mrhr = 0, 0, 0, 0, 0, 0
 
     for trainset, testset in kf.split(data):
         n_fold += 1
@@ -170,7 +170,7 @@ try:
         n = 0
         batch = 100
         b = 0
-        fold_sum_mhrh = 0
+        fold_sum_mrhr = 0
 
         # while n < trainset.n_users:
         while n < (num_testing_batches * batch):
@@ -233,17 +233,17 @@ try:
                     # Investigate correlations between recomennded articles keywords
                     # for iid, _ in users_top_10[uid]:
                     # print(keywords[iid])
-                    user_mhrh_sum = 0
+                    user_mrhr_sum = 0
                     denominator = 1
-                    for article_id, _ in users_top_10[uid]:  # mhrh & ctr
+                    for article_id, _ in users_top_10[uid]:  # mrhr & ctr
                         numerator = 1 if is_relevant(testset_by_user, uid, article_id) else 0
                         fraction = numerator / denominator
-                        user_mhrh_sum += fraction
+                        user_mrhr_sum += fraction
                         denominator += 1
-                        fold_sum_mhrh += user_mhrh_sum
                         if uid in articles_clicked_by_user:
                             if article_id in articles_clicked_by_user[uid]:
                                 clicks += 1
+                    fold_sum_mrhr += user_mrhr_sum
                     ctr = clicks / len(users_top_10[uid])
                     batch_sum_ctr += ctr
                 fold_average_ctr = batch_sum_ctr / batch
@@ -263,14 +263,19 @@ try:
                 sum_recall += fold_average_recall
                 sum_f1 += fold_average_f1
                 sum_ctr += fold_average_ctr
-                # To get the average MHRH score we must divide by the total umber of users tested.
-                fold_avg_mhrh = fold_sum_mhrh / (num_testing_batches * batch)
-                sum_mhrh += fold_avg_mhrh
                 # sum_roc_auc_score += fold_roc_auc_score
+
+            print(fold_sum_mrhr / (b * batch))
             n += batch
         # print(round(n / trainset.n_users, 4), "%", end='       \r')
         # newline
         # print()
+
+        # Add Total sums used for calculating averages over all Folds
+        #   For MRHR this means that we add the folds average mrhr to the total sum. After all folds have been run we find the
+        #   Average of the folds by dividing by the number of folds.
+        sum_mrhr += fold_sum_mrhr / (num_testing_batches * batch)
+        print(fold_sum_mrhr / (num_testing_batches * batch))
 
     if args.metrics:
         average_recall = sum_recall / (n_folds * num_testing_batches)
@@ -278,14 +283,14 @@ try:
         average_f1 = sum_f1 / (n_folds * num_testing_batches)
         average_roc_auc = sum_roc_auc_score / (n_folds * num_testing_batches)
         average_ctr = sum_ctr / (n_folds * num_testing_batches)
-        average_mhrh = sum_mhrh / (n_folds)
+        average_mrhr = sum_mrhr / n_folds
         print("---RESULT---")
         print("Average Precision:", average_precision)
         print("Average Recall:", average_recall)
         print("Average F1:", average_f1)
         print("Average ROC AUC:", average_roc_auc)
         print("Average CTR:", average_ctr)
-        print("Average MHRH:", average_mhrh)
+        print("Average MRHR:", average_mrhr)
 
 finally:
     if args.csv:
