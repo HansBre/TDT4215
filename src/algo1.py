@@ -255,20 +255,17 @@ try:
                     list(recall_pr_user.values())) > 0 else 1
                 fold_average_f1 = get_f1(fold_average_precision, fold_average_recall)
 
-                # Build prediction sets grouped by user for roc_auc metric evaluation & MHRH
-                true, test = [], []
-                for prediction in predictions:
-                    relevant = 1 if prediction.r_ui > relevance_threshold else 0
-                    estimated_relevant = 1 if prediction.est > relevance_threshold else 0
-                    true.append(relevant)
-                    test.append(estimated_relevant)
+                # ROC_AUC
+
 
                 # Add for Kfold average
                 sum_precision += fold_average_precision
                 sum_recall += fold_average_recall
                 sum_f1 += fold_average_f1
                 sum_ctr += fold_average_ctr
-                sum_mhrh += fold_sum_mhrh
+                # To get the average MHRH score we must divide by the total umber of users tested.
+                fold_avg_mhrh = fold_sum_mhrh / (num_testing_batches * batch)
+                sum_mhrh += fold_avg_mhrh
                 # sum_roc_auc_score += fold_roc_auc_score
             n += batch
         # print(round(n / trainset.n_users, 4), "%", end='       \r')
@@ -281,7 +278,7 @@ try:
         average_f1 = sum_f1 / (n_folds * num_testing_batches)
         average_roc_auc = sum_roc_auc_score / (n_folds * num_testing_batches)
         average_ctr = sum_ctr / (n_folds * num_testing_batches)
-        average_mhrh = sum_mhrh / (n_fold * num_testing_batches * 100)
+        average_mhrh = sum_mhrh / (n_folds)
         print("---RESULT---")
         print("Average Precision:", average_precision)
         print("Average Recall:", average_recall)
