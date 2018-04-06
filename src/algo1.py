@@ -1,4 +1,8 @@
 import argparse
+from math import inf
+from datetime import datetime
+
+import random
 from os import path
 from surprise import Dataset
 from surprise import Reader
@@ -10,13 +14,15 @@ import csv
 from tools.prediction_tools import precision_recall_at_k, get_f1, get_top_n
 from sklearn.metrics import roc_auc_score
 import numpy as np
-from src.hybrid import Hybrid, AlgorithmTuple
+from src.hybrid import Hybrid, AlgorithmTuple, AlgorithmResult
+from src.db import FulltextDb
+from src.datefactor import DateFactor
 
 parser = argparse.ArgumentParser(
-    description='Make predictions using the SVD algorithm. '
-                'Prints median prediction error per split. '
-                'The active time is the variable being predicted.',
+    description='Make predictions using a hybrid algorithm.',
+    add_help=False,
 )
+FulltextDb.populate_argparser(parser)
 parser.add_argument(
     '--input', '-i',
     help='Preprocessed file with user, item and active time. '
@@ -26,9 +32,9 @@ parser.add_argument(
 parser.add_argument(
     '--csv', '-o',
     help='When given, create a comma separated values file suitable for '
-         'programs like Excel and Libreoffice Calc. Includes item and user ID,'
-         'original active time, predicted active time and difference between '
-         'those two.',
+         'programs like Excel and Libreoffice Calc. Includes item and user ID, '
+         'original rating and predicted ratings from both hybrid and all '
+         'included algorithms.',
     default=False,
 )
 
@@ -44,6 +50,16 @@ parser.add_argument(
     action='store_true',
 )
 
+parser.add_argument(
+    '--seed', '-s',
+    help='Random seed to use. Set this to have reproducible experiments, so '
+         'that you can change one variable and keep everything else (folding, '
+         'random initial variables) the same. By default, a new seed is used '
+         'every time.',
+    default=None,
+    type=int,
+)
+
 
 def is_relevant(testset_by_user, uid, iid):
     if uid in testset_by_user and iid in testset_by_user[uid]:
@@ -54,16 +70,29 @@ def is_relevant(testset_by_user, uid, iid):
 
 args = parser.parse_args()
 
+if args.seed is not None:
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+
 reader = Reader(line_format='user item rating', sep='\t')
 data = Dataset.load_from_file(args.input, reader=reader)
 
+db = FulltextDb.create_from_args(args)
 algo = Hybrid(
     (
         # Singular Value Decomposition (SVD) is used for this example
         AlgorithmTuple(SVD(), 1),
+        AlgorithmTuple(DateFactor(
+            db,
+            cut_after=datetime(2017, 1, 8),  # Change if using three-week set
+            oldest_date=datetime(2013, 1, 1),
+            weight=0.5,
+        ), inf)
     ),
     path.join(path.dirname(path.dirname(__file__)), 'spool'),
 )
+db.close()
+del db
 
 n_folds = 2
 kf = KFold(n_splits=n_folds)
@@ -83,7 +112,8 @@ relevance_threshold = 2.5
 if args.csv:
     output_file = open(args.csv, 'wt', newline='')
     try:
-        fields = ['uid', 'iid', 'estimated', 'actual', 'error']
+        algorithms = ['SVD', 'DateFactor']
+        fields = ['uid', 'iid', 'estimated', *algorithms, 'actual', 'error']
         csv_writer = csv.DictWriter(output_file, fieldnames=fields,
                                     dialect='unix')
         csv_writer.writeheader()
@@ -171,6 +201,25 @@ try:
             if (args.verbose):
                 print('Starting testing')
             predictions = algo.test(batch_testset)
+            
+            if args.csv:
+                def float2csv(f):
+                    return str(f).replace('.', ',')
+
+                for p in predictions:
+                    details = p.details
+                    individual_p = {res.algorithm_name: float2csv(res.prediction)
+                                    for res in details.values()
+                                    if isinstance(res, AlgorithmResult)}
+                    csv_writer.writerow({
+                        'uid': p.uid,
+                        'iid': p.iid,
+                        'estimated': float2csv(p.est),
+                        **individual_p,
+                        'actual': float2csv(p.r_ui),
+                        'error': float2csv(abs(p.est-p.r_ui)),
+                    })
+                    
             if (args.verbose):
                 print('Getting top_n')
             top_n = get_top_n(predictions, n=10)
