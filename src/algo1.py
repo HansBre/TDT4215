@@ -67,6 +67,9 @@ def is_relevant(testset_by_user, uid, iid):
             return True
     return False
 
+# Helper which checks if all elements in a list is similar.
+def checkEqual(iterator):
+   return len(set(iterator)) <= 1
 
 args = parser.parse_args()
 
@@ -129,6 +132,8 @@ for user in user_gen:
     print(len(trainset.ur[user]))
 
 """
+# Batch Size
+batch = 100
 try:
     if args.verbose:
         print("Folding")
@@ -157,7 +162,7 @@ try:
             else:
                 raw_tuples = [t]
                 testset_by_user[t[0]] = dict()
-                # Now we can find true rating from user and artcle id to determine relevance.
+                # Now we can find true rating from user and article id to determine relevance.
                 testset_by_user[t[0]]['raw'] = raw_tuples
                 articles_clicked_by_user[t[0]] = set()
             testset_by_user[t[0]][t[1]] = t[2]
@@ -168,7 +173,6 @@ try:
         users_top_10 = {}
 
         n = 0
-        batch = 100
         b = 0
         fold_sum_mrhr = 0
 
@@ -230,6 +234,7 @@ try:
                 # Evaluate Metrics
                 # CTR
                 batch_sum_ctr = 0
+                batch_sum_roc_auc = 0
 
                 for uid in users_top_10:
                     clicks = 0
@@ -238,17 +243,59 @@ try:
                     # print(keywords[iid])
                     user_mrhr_sum = 0
                     denominator = 1
-                    for article_id, _ in users_top_10[uid]:  # mrhr & ctr
+                    # The following 2 lists are used to calculate the are under the ROC curve.
+                    # The following lists will contain the true value of whether an article is deemed relevant for a
+                    # user or not
+                    true = []
+                    # The following list will contain the systems estimated rating for the article (rating between 1-5)
+                    # but it will be normalized to be a value between 0-1 where 0 corresponds to 1 and 1 corresponds to
+                    # 5.
+                    score = []
+                    for article_id, estimated_rating in users_top_10[uid]:  # mrhr & ctr
+                        # First we calculate the fraction used to calculate the MRHR.
+                        # The numerator is 1 if the article really is relevant for the user, else 0
                         numerator = 1 if is_relevant(testset_by_user, uid, article_id) else 0
                         fraction = numerator / denominator
+                        # We add the articles mrhr sum to the total mrhr sum of the user. Later we will use this to
+                        # get the average for the entire test.
                         user_mrhr_sum += fraction
+                        # The MRHR metric takes ranking into account, so the later items are less weighted, thus we
+                        # increment the denominator for each user. (its reset to 1 at the start of each user).
                         denominator += 1
+
+                        # Update the true and score lists for roc auc
+                        # One important thing to note about our ROC_AUC measure
+                        # is that we only look at the top k for each user
+                        # And since we only look at the most likely positive ones, then we never actually check if the
+                        # ones that are estimated to be not relevant for the users actually are relevant.
+                        true.append(numerator)
+                        # Normalize estimate from 1-5 range to 0-1 range
+                        normalized = (estimated_rating - 1) / (5 - 1)
+                        score.append(normalized)
+
+                        # Here we calculate the clickthrough rate of the user.
+                        # Articles clicked by is a dict containing all articleuids keyed by the users id.
                         if uid in articles_clicked_by_user:
                             if article_id in articles_clicked_by_user[uid]:
                                 clicks += 1
                     fold_sum_mrhr += user_mrhr_sum
                     ctr = clicks / len(users_top_10[uid])
                     batch_sum_ctr += ctr
+                    try:
+                        user_roc_auc_score = roc_auc_score(true, score)
+                        batch_sum_roc_auc += user_roc_auc_score
+                    except ValueError:
+                        # If ALL of the elements in the true list are ALL 1's or 0's, well then ROC_AUC is not defined.
+                        # I just set 1 )max score). (Since all were relevant)
+                        if checkEqual(true):
+                            # print(1)
+                            batch_sum_roc_auc += 1
+                        else:
+                            # Ok, if this happends then I have no clue why.
+                            print("Something went wrong while calculating roc_auc, "
+                                  "It might mean something is wrong with the data.")
+                            exit()
+
                 batch_average_ctr = batch_sum_ctr / batch
 
                 # Precision Recall
@@ -266,7 +313,7 @@ try:
                 sum_recall += batch_average_recall
                 sum_f1 += batch_average_f1
                 sum_ctr += batch_average_ctr
-                # sum_roc_auc_score += fold_roc_auc_score
+                sum_roc_auc_score += batch_sum_roc_auc
 
             n += batch
         # print(round(n / trainset.n_users, 4), "%", end='       \r')
@@ -282,7 +329,7 @@ try:
         average_recall = sum_recall / (n_folds * num_testing_batches)
         average_precision = sum_precision / (n_folds * num_testing_batches)
         average_f1 = sum_f1 / (n_folds * num_testing_batches)
-        average_roc_auc = sum_roc_auc_score / (n_folds * num_testing_batches)
+        average_roc_auc = sum_roc_auc_score / (n_folds * num_testing_batches * batch)
         average_ctr = sum_ctr / (n_folds * num_testing_batches)
         average_mrhr = sum_mrhr / n_folds
         print("---RESULT---")
