@@ -131,7 +131,7 @@ for user in user_gen:
 """
 try:
     if args.verbose:
-        print("Starting Folding")
+        print("Folding")
     n_fold = 0
     sum_precision, sum_recall, sum_f1, sum_roc_auc_score, sum_ctr, sum_mrhr = 0, 0, 0, 0, 0, 0
 
@@ -177,7 +177,7 @@ try:
             batch_testset = []
             b += 1
             if (args.verbose):
-                print('Starting building batch', b)
+                print('Building batch', b)
             for u in range(n, n + batch):
                 try:
                     user_items = set([j for (j, _) in trainset.ur[u]])
@@ -193,7 +193,7 @@ try:
                     # This means we have gone through all the users
                     break
             if (args.verbose):
-                print('Starting testing')
+                print('Testing')
             predictions = algo.test(batch_testset)
             
             if args.csv:
@@ -218,6 +218,9 @@ try:
                 print('Getting top_n')
             top_n = get_top_n(predictions, n=10)
 
+            # we must reset this on every batch, since we only want to obtain metrics for the users from THIS BATCH
+            # And later we iterate through all the userID' in users_top_10
+            users_top_10 = {}
             for uid, user_ratings in top_n.items():
                 users_top_10[uid] = user_ratings
 
@@ -246,26 +249,25 @@ try:
                     fold_sum_mrhr += user_mrhr_sum
                     ctr = clicks / len(users_top_10[uid])
                     batch_sum_ctr += ctr
-                fold_average_ctr = batch_sum_ctr / batch
+                batch_average_ctr = batch_sum_ctr / batch
 
                 # Precision Recall
                 precision_pr_user, recall_pr_user = precision_recall_at_k(predictions, k=10, threshold=relevance_threshold)
-                fold_average_precision = np.average(list(precision_pr_user.values()))
-                fold_average_recall = np.average(list(recall_pr_user.values())) if len(
+                batch_average_precision = np.average(list(precision_pr_user.values()))
+                batch_average_recall = np.average(list(recall_pr_user.values())) if len(
                     list(recall_pr_user.values())) > 0 else 1
-                fold_average_f1 = get_f1(fold_average_precision, fold_average_recall)
+                batch_average_f1 = get_f1(batch_average_precision, batch_average_recall)
 
                 # ROC_AUC
 
 
                 # Add for Kfold average
-                sum_precision += fold_average_precision
-                sum_recall += fold_average_recall
-                sum_f1 += fold_average_f1
-                sum_ctr += fold_average_ctr
+                sum_precision += batch_average_precision
+                sum_recall += batch_average_recall
+                sum_f1 += batch_average_f1
+                sum_ctr += batch_average_ctr
                 # sum_roc_auc_score += fold_roc_auc_score
 
-            print(fold_sum_mrhr / (b * batch))
             n += batch
         # print(round(n / trainset.n_users, 4), "%", end='       \r')
         # newline
@@ -275,7 +277,6 @@ try:
         #   For MRHR this means that we add the folds average mrhr to the total sum. After all folds have been run we find the
         #   Average of the folds by dividing by the number of folds.
         sum_mrhr += fold_sum_mrhr / (num_testing_batches * batch)
-        print(fold_sum_mrhr / (num_testing_batches * batch))
 
     if args.metrics:
         average_recall = sum_recall / (n_folds * num_testing_batches)
