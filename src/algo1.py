@@ -105,7 +105,7 @@ num_testing_batches = 10
 
 # Threshold for saying an article is relevant for a user or not.
 # If estimated rating is higher than threshold, we say article is relevant for that user, else not.
-relevance_threshold = 3.5
+relevance_threshold = 2.5
 
 # Get all article keywords
 # keywords = dict()
