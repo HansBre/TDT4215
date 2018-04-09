@@ -100,6 +100,7 @@ del db
 n_folds = 2
 kf = KFold(n_splits=n_folds)
 
+k = 10
 num_testing_batches = 10
 
 # Threshold for saying an article is relevant for a user or not.
@@ -220,7 +221,7 @@ try:
                     
             if (args.verbose):
                 print('Getting top_n')
-            top_n = get_top_n(predictions, n=10)
+            top_n = get_top_n(predictions, n=k)
 
             # we must reset this on every batch, since we only want to obtain metrics for the users from THIS BATCH
             # And later we iterate through all the userID' in users_top_10
@@ -251,18 +252,21 @@ try:
                     # but it will be normalized to be a value between 0-1 where 0 corresponds to 1 and 1 corresponds to
                     # 5.
                     score = []
+                    mrhr_hit = False
                     for article_id, estimated_rating in users_top_10[uid]:  # mrhr & ctr
                         # First we calculate the fraction used to calculate the MRHR.
                         # The numerator is 1 if the article really is relevant for the user, else 0
                         numerator = 1 if is_relevant(testset_by_user, uid, article_id) else 0
-                        fraction = numerator / denominator
-                        # We add the articles mrhr sum to the total mrhr sum of the user. Later we will use this to
-                        # get the average for the entire test.
-                        user_mrhr_sum += fraction
-                        # The MRHR metric takes ranking into account, so the later items are less weighted, thus we
-                        # increment the denominator for each user. (its reset to 1 at the start of each user).
-                        denominator += 1
-
+                        if not mrhr_hit:
+                            fraction = numerator / denominator
+                            # We add the articles mrhr sum to the total mrhr sum of the user. Later we will use this to
+                            # get the average for the entire test.
+                            user_mrhr_sum = fraction
+                            # The MRHR metric takes ranking into account, so the later items are less weighted, thus we
+                            # increment the denominator for each user. (its reset to 1 at the start of each user).
+                            denominator += 1
+                            if numerator == 1:
+                                mrhr_hit = True
                         # Update the true and score lists for roc auc
                         # One important thing to note about our ROC_AUC measure
                         # is that we only look at the top k for each user
@@ -299,7 +303,7 @@ try:
                 batch_average_ctr = batch_sum_ctr / batch
 
                 # Precision Recall
-                precision_pr_user, recall_pr_user = precision_recall_at_k(predictions, k=10, threshold=relevance_threshold)
+                precision_pr_user, recall_pr_user = precision_recall_at_k(predictions, k=k, threshold=relevance_threshold)
                 batch_average_precision = np.average(list(precision_pr_user.values()))
                 batch_average_recall = np.average(list(recall_pr_user.values())) if len(
                     list(recall_pr_user.values())) > 0 else 1
