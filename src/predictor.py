@@ -7,9 +7,7 @@ from os import path
 from surprise import Dataset
 from surprise import Reader
 from surprise import SVD
-from surprise.model_selection import KFold, train_test_split
-
-import statistics
+from surprise.model_selection import KFold
 import csv
 from tools.prediction_tools import precision_recall_at_k, get_f1, get_top_n
 from sklearn.metrics import roc_auc_score
@@ -67,9 +65,11 @@ def is_relevant(testset_by_user, uid, iid):
             return True
     return False
 
+
 # Helper which checks if all elements in a list is similar.
 def checkEqual(iterator):
-   return len(set(iterator)) <= 1
+    return len(set(iterator)) <= 1
+
 
 args = parser.parse_args()
 
@@ -181,7 +181,7 @@ try:
         while n < (num_testing_batches * batch):
             batch_testset = []
             b += 1
-            if (args.verbose):
+            if args.verbose:
                 print('Building batch', b)
             for u in range(n, n + batch):
                 try:
@@ -197,13 +197,14 @@ try:
                 except ValueError:
                     # This means we have gone through all the users
                     break
-            if (args.verbose):
+            if args.verbose:
                 print('Testing')
             predictions = algo.test(batch_testset)
-            
+
             if args.csv:
                 def float2csv(f):
                     return str(f).replace('.', ',')
+
 
                 for p in predictions:
                     details = p.details
@@ -216,10 +217,10 @@ try:
                         'estimated': float2csv(p.est),
                         **individual_p,
                         'actual': float2csv(p.r_ui),
-                        'error': float2csv(abs(p.est-p.r_ui)),
+                        'error': float2csv(abs(p.est - p.r_ui)),
                     })
-                    
-            if (args.verbose):
+
+            if args.verbose:
                 print('Getting top_n')
             top_n = get_top_n(predictions, n=k)
 
@@ -303,14 +304,14 @@ try:
                 batch_average_ctr = batch_sum_ctr / batch
 
                 # Precision Recall
-                precision_pr_user, recall_pr_user = precision_recall_at_k(predictions, k=k, threshold=relevance_threshold)
+                precision_pr_user, recall_pr_user = precision_recall_at_k(predictions, k=k,
+                                                                          threshold=relevance_threshold)
                 batch_average_precision = np.average(list(precision_pr_user.values()))
                 batch_average_recall = np.average(list(recall_pr_user.values())) if len(
                     list(recall_pr_user.values())) > 0 else 1
                 batch_average_f1 = get_f1(batch_average_precision, batch_average_recall)
 
                 # ROC_AUC
-
 
                 # Add for Kfold average
                 sum_precision += batch_average_precision
@@ -324,9 +325,9 @@ try:
         # newline
         # print()
 
-        # Add Total sums used for calculating averages over all Folds
-        #   For MRHR this means that we add the folds average mrhr to the total sum. After all folds have been run we find the
-        #   Average of the folds by dividing by the number of folds.
+        # Add Total sums used for calculating averages over all Folds For MRHR this means that we add the folds
+        # average mrhr to the total sum. After all folds have been run we find the Average of the folds by dividing
+        # by the number of folds.
         sum_mrhr += fold_sum_mrhr / (num_testing_batches * batch)
 
     if args.metrics:
