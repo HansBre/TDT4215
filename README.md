@@ -31,7 +31,7 @@ Run while in the root folder:
 pipenv run python -m src.MODULE_NAME ARGUMENTS
 ```
 
-where `MODULE_NAME` is the name of a Python module to run (like `algo1`) and `ARGUMENTS` are the arguments you'd like to pass to the module.
+where `MODULE_NAME` is the name of a Python module to run (like `predictor`) and `ARGUMENTS` are the arguments you'd like to pass to the module.
 
 Use `--help` to see available arguments.
 
@@ -49,6 +49,6 @@ Use `--help` to see available arguments.
   <dd>Library with a hybrid recommender algorithm.</dd>
   <dt><code>datefactor</code></dt>
   <dd>Library with an algorithm which weights articles according to their publication date.</dd>
-  <dt><code>algo1</code></dt>
+  <dt><code>predictor</code></dt>
   <dd>Runnable module which sets up a hybrid recommender system and runs it using the available dataset, by first training and then testing the algorithm. A number of metrics are collected about the algorithm's performance.</dd>
 </dl>
