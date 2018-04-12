@@ -23,6 +23,17 @@ Just try:
 pipenv install
 ```
 
+### Database setup
+
+```sql
+CREATE TABLE `articles` (
+  `id` varchar(50) NOT NULL,
+  `word_count` int(10) unsigned DEFAULT NULL,
+  `published` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`)
+);
+```
+
 ### Run
 
 Run while in the root folder:
