@@ -27,8 +27,8 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    '--treshold','-t',
-    help = 'Sets the treshold for views required by an article, defaults to 30',
+    '--threshold','-t',
+    help = 'Sets the treshold for views required by an article in order for it not to be pruned, defaults to 30',
     default=30,
 )
 
@@ -44,15 +44,19 @@ parser.add_argument(
     default=False
 )
 args = parser.parse_args()
+args.level = int(args.level)
+args.threshold = int(args.threshold)
+
 
 if args.input.endswith('.gz'):
     input_func = gzip.open
 else:
     input_func = open
 
+
 article_keywords = dict()
 user_articles = dict()
-
+#This function maps users to articles, maps keywords to articles and counts how many times a particular article appears in the collection.
 def update_keywords_from_file(keywords_dict,user_dict,f):
     with input_func(f,'rt',encoding ='utf8') as input_file:
         for line in input_file:
@@ -85,6 +89,7 @@ print(len(article_keywords.keys()))
 
 
 
+#Prune articles with less views than specified by the threshold
 keys = list(article_keywords.keys())
 for title in keys:
     if article_keywords[title]['count']<args.treshold:
@@ -95,6 +100,8 @@ print(len(user_articles.keys()))
 print("Finished disk reading, time for them numbers")
 article_corpus = []
 article_tags = []
+
+#Extract keywords from articles and create a TF-IDF weighted sparse matrix
 for title in article_keywords:
     article_corpus.append(" ".join(article_keywords[title]['keywords']))
     article_tags.append(title)
@@ -107,16 +114,21 @@ for title in user_articles:
         if user not in user_keywords:
             user_keywords[user] = ''
         user_keywords[user] = user_keywords[user] + ' '+ ' '.join(article_keywords[title]['keywords'])
+
+#Create user keyword vectors by examining which articles the user has read, and merging their keywords into a single vector.
+#Create TF-IDF weighted sparse matrix
 user_corpus = []
 user_tags = []
 for user in user_keywords:
     user_corpus.append(user_keywords[user])
     user_tags.append(user)
 tf_idf_users = vectorizer.fit_transform(user_corpus)
+#Calculate similarity between users and articles
 similarity_matrix = linear_kernel(tf_idf_articles,tf_idf_users)
 
 recommendation_count = dict()
 
+#Calculate the ROC for a specific user's corresponding article ratings.
 def calculate_roc(intervals,ratings,global_relevant_titles):
     roc = []
     for i in range(0,intervals):
@@ -140,7 +152,8 @@ def calculate_roc(intervals,ratings,global_relevant_titles):
         roc.append((res_true,res_false))
     return roc
 
-def calculate_cosine_sim(uid,k_value,r_count):
+#Sorts the ratings, returns top K and calculate metrics
+def calculate_cosine_sim_metrics(uid,k_value,r_count):
     
     user_tag = user_tags[uid]
     ratings = []
@@ -234,8 +247,9 @@ total_precision = 0
 total_recall = 0
 total_mrhr = 0
 
+#For every user row in the similarity matrix, sort ratings and calculate metrics
 for counter in range(0,similarity_matrix.shape[1]):
-    (local_recall,local_precision,local_mrhr,roc) = calculate_cosine_sim(counter,5,recommendation_count)
+    (local_recall,local_precision,local_mrhr,roc) = calculate_cosine_sim_metrics(counter,args.level,recommendation_count)
     total_precision+=local_precision
     total_roc = sum_roc(roc,total_roc)
     total_recall+=local_recall
